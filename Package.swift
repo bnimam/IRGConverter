@@ -14,5 +14,15 @@ let package = Package(
             name: "IRGConverter",
             dependencies: ["IRGConverterCore"]
         ),
+        // Command-line converter, and what the Lightroom plugin drives.
+        .executableTarget(
+            name: "irgconvert",
+            dependencies: ["IRGConverterCore"]
+        ),
+        // Numeric self-check, runnable without Xcode: `swift run IRGConverterCheck`
+        .executableTarget(
+            name: "IRGConverterCheck",
+            dependencies: ["IRGConverterCore"]
+        ),
     ]
 )
