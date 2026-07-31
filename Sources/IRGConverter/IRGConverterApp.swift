@@ -28,6 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Files delivered before anything was listening.
     private(set) static var pending: [URL] = []
+    /// Set once a view has drained the queue. After that the notification is the
+    /// only delivery route — otherwise every later drop kept piling up in `pending`
+    /// and a newly opened window would import the whole session's history.
+    private static var hasListener = false
 
     func application(_ application: NSApplication, open urls: [URL]) {
         Self.deliver(urls)
@@ -44,13 +48,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func deliver(_ urls: [URL]) {
         let existing = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
         guard !existing.isEmpty else { return }
-        pending += existing
+        if !hasListener { pending += existing }
         NotificationCenter.default.post(name: openFiles, object: nil,
                                         userInfo: ["urls": existing])
     }
 
     /// Hand over anything that queued before the view was listening.
     static func takePending() -> [URL] {
+        hasListener = true
         defer { pending = [] }
         return pending
     }

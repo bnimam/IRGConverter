@@ -21,6 +21,9 @@ struct Options {
     var look = LookSettings()
     var raw = RawDevelopSettings()
     var monochrome: MonochromeSource = .off
+    /// Nil unless a `--sharpen*` flag was given, so a preset's own sharpening is
+    /// left alone otherwise.
+    var sharpening: Sharpening?
     var listPresets = false
     var quiet = false
     /// Set by `--ir-channel`; nil leaves whatever the preset chose.
@@ -42,12 +45,16 @@ OPTIONS
   --strength <0..1>     Look strength. Default 0.5.
   --magenta <-1..1>     Foliage between pure red and magenta. Default 0.
   --density <-1..1>     Overall density. Default 0.
+  --sharpen <0..2>      Unsharp mask amount. 0 (default) is off.
+  --sharpen-radius <px> Radius in pixels. Default 1.0.
+  --sharpen-threshold   Leave detail below this many levels of 255 alone. Default 0.
   --mono <mode>         off | infrared | visibleRed | visibleGreen | luminance
   --ir-channel <r|g|b>  Which source channel holds infrared. Default b.
   --headroom <stops>    RAW highlight headroom. Default -1.0.
   --temperature <K>     RAW colour temperature. Implies non-neutral balance.
   --tint <-150..150>    RAW tint. Implies non-neutral balance.
   --quiet               Suppress the summary line.
+  --version             Print the version and exit.
   --help                This text.
 
 Values given on the command line override the preset's.
@@ -100,8 +107,20 @@ func parse(_ arguments: [String]) -> Options {
                 fail("--ir-channel: expected r, g or b")
             }
             o.irChannel = index
+        case "--sharpen":
+            o.sharpening = o.sharpening ?? Sharpening()
+            o.sharpening?.amount = float("--sharpen")
+        case "--sharpen-radius":
+            o.sharpening = o.sharpening ?? Sharpening()
+            o.sharpening?.radius = float("--sharpen-radius")
+        case "--sharpen-threshold":
+            o.sharpening = o.sharpening ?? Sharpening()
+            o.sharpening?.threshold = float("--sharpen-threshold")
         case "--list-presets": o.listPresets = true
         case "--quiet", "-q": o.quiet = true
+        case "--version":
+            print("irgconvert \(IRGConverterVersion.current)")
+            exit(0)
         case "--help", "-h":
             print(usage)
             exit(0)
@@ -173,6 +192,9 @@ if options.look.density != dialDefaults.density {
 if preset.usesLook || dialGiven { params = look.applied(to: params) }
 
 if options.monochrome != .off { params.monochrome = options.monochrome }
+// Full resolution here, so the radius is already in the units it is defined in and
+// the processor's `renderScale` stays 1.
+if let sharpening = options.sharpening { params.adjustments.sharpening = sharpening }
 if let ir = options.irChannel {
     params.sourceIR = ir
     let others = [0, 1, 2].filter { $0 != ir }

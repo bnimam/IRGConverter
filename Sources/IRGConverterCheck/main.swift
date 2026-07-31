@@ -30,8 +30,8 @@ func checkClose(_ actual: Float, _ expected: Float, tolerance: Float, _ message:
 
 // MARK: - Scalar reference
 
-/// Straight transcription of the Photoshop layer workflow in
-/// `photoshop_method.md`, used to validate the vectorized implementation.
+/// Straight transcription of the Photoshop layer workflow, used to validate the
+/// vectorized implementation.
 func reference(srcR: Float, srcG: Float, srcB: Float, p: AerochromeParams) -> (Float, Float, Float) {
     let src = [srcR, srcG, srcB]
     func role(_ i: Int) -> Float { src[min(max(i, 0), 2)] }
@@ -99,6 +99,44 @@ func makeImage(_ pixels: [(UInt8, UInt8, UInt8)]) -> CGImage {
     return ctx.makeImage()!
 }
 
+/// A rectangular fixture, for the one stage that reads its neighbours: sharpening.
+/// `pixel(x, y)` is sampled with y = 0 at the top, matching `readRows`.
+func makeImage(width: Int, height: Int,
+               _ pixel: (Int, Int) -> (UInt8, UInt8, UInt8)) -> CGImage {
+    let ctx = CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: bitmapInfo.rawValue
+    )!
+    let buf = ctx.data!.assumingMemoryBound(to: UInt8.self)
+    for y in 0..<height {
+        for x in 0..<width {
+            let px = pixel(x, y)
+            let o = y * ctx.bytesPerRow + x * 4
+            buf[o + 0] = px.2
+            buf[o + 1] = px.1
+            buf[o + 2] = px.0
+        }
+    }
+    return ctx.makeImage()!
+}
+
+/// Every row of a rendered image, top row first.
+func readRows(_ image: CGImage) -> [[(Float, Float, Float)]] {
+    let ctx = CGContext(
+        data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+        bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: bitmapInfo.rawValue
+    )!
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    let buf = ctx.data!.assumingMemoryBound(to: UInt8.self)
+    return (0..<image.height).map { y in
+        (0..<image.width).map { x -> (Float, Float, Float) in
+            let o = y * ctx.bytesPerRow + x * 4
+            return (Float(buf[o + 2]), Float(buf[o + 1]), Float(buf[o + 0]))
+        }
+    }
+}
+
 func readPixels(_ image: CGImage) -> [(Float, Float, Float)] {
     let ctx = makeContext(width: image.width)
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: 1))
@@ -129,16 +167,17 @@ do {
     tweaked.sourceVisibleRed = 1
     tweaked.sourceVisibleGreen = 2
 
-    // The document's own starting values.
-    var asWritten = AerochromeParams()
-    asWritten.subtractIRRed = 0.5
-    asWritten.subtractIRGreen = 0.8
-    asWritten.gammaRx = 0.85
-    asWritten.gammaGx = 1.20
-    asWritten.gammaBy = 0.85
-    asWritten.overallGamma = 2.8
+    // Heavy subtraction with a dark infrared group and a large final lift — a corner
+    // of the parameter space the shipped look does not visit, so worth pinning.
+    var heavySubtraction = AerochromeParams()
+    heavySubtraction.subtractIRRed = 0.5
+    heavySubtraction.subtractIRGreen = 0.8
+    heavySubtraction.gammaRx = 0.85
+    heavySubtraction.gammaGx = 1.20
+    heavySubtraction.gammaBy = 0.85
+    heavySubtraction.overallGamma = 2.8
 
-    var remapped = asWritten
+    var remapped = heavySubtraction
     remapped.outputMapR = 1; remapped.outputMapG = 2; remapped.outputMapB = 0
 
     // Each monochrome mode goes through a different path in the mapping stage.
@@ -152,7 +191,7 @@ do {
     let processor = AerochromeProcessor()
     check(processor.prepare(cgImage: makeImage(samples)), "prepare succeeds")
 
-    for (v, p) in [AerochromeParams(), tweaked, asWritten, remapped,
+    for (v, p) in [AerochromeParams(), tweaked, heavySubtraction, remapped,
                    monoIR, monoLuma, monoGreen].enumerated() {
         guard let out = processor.process(params: p) else {
             check(false, "variant \(v) produced an image")
@@ -467,6 +506,150 @@ do {
     let greenHeld = redPx.enumerated().allSatisfy { abs($0.element.1 - base[$0.offset].1) <= 1 }
     check(redFell, "a red-channel curve only pulls red down")
     check(greenHeld, "a red-channel curve leaves green alone")
+}
+
+print("sharpening: an unsharp mask, off by default, honest about scale")
+do {
+    check(Sharpening().isIdentity, "sharpening is off by default")
+    check(AerochromeAdjustments().isIdentity, "so the default adjustments are still the identity")
+    var sharpenOnly = AerochromeAdjustments()
+    sharpenOnly.sharpening.amount = 1
+    check(!sharpenOnly.isIdentity && sharpenOnly.isToneIdentity,
+          "a sharpening-only edit skips the tonal pass but is not the identity")
+
+    for radius in [Float(0.3), 1, 3] {
+        let kernel = AerochromeProcessor.gaussianKernel(radius: radius)
+        check(kernel.count % 2 == 1, "radius \(radius): odd tap count (\(kernel.count))")
+        check(abs(kernel.reduce(0, +) - 1) < 1e-5,
+              "radius \(radius): sums to one, so the blur does not change brightness")
+        check(kernel.first! == kernel.last!, "radius \(radius): symmetric")
+    }
+    check(AerochromeProcessor.gaussianKernel(radius: 3).count
+            > AerochromeProcessor.gaussianKernel(radius: 1).count,
+          "a larger radius reaches further")
+
+    func luma(_ px: (Float, Float, Float)) -> Float {
+        0.2126 * px.0 + 0.7152 * px.1 + 0.0722 * px.2
+    }
+
+    // A horizontal step: 16 dark columns then 16 light ones, 8 rows tall.
+    let edge = makeImage(width: 32, height: 8) { x, _ in
+        x < 16 ? (60, 70, 55) : (190, 200, 185)
+    }
+    let processor = AerochromeProcessor()
+    check(processor.prepare(cgImage: edge), "prepared the edge fixture")
+    let base = readRows(processor.process(params: AerochromeParams())!)[4]
+
+    var off = AerochromeParams()
+    off.adjustments.sharpening.amount = 0
+    off.adjustments.sharpening.radius = 2
+    let unchanged = readRows(processor.process(params: off)!)[4]
+    check(zip(base, unchanged).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 && $0.2 == $1.2 },
+          "amount 0 changes nothing, whatever the radius says")
+
+    var sharp = AerochromeParams()
+    sharp.adjustments.sharpening.amount = 1
+    sharp.adjustments.sharpening.radius = 1
+    let sharpened = readRows(processor.process(params: sharp)!)[4]
+
+    // The signature of an unsharp mask is overshoot: the light side of an edge goes
+    // lighter and the dark side darker, which is exactly the halo, kept small.
+    check(luma(sharpened[16]) > luma(base[16]),
+          "the light side of the edge is lifted (\(Int(luma(base[16]))) -> \(Int(luma(sharpened[16]))))")
+    check(luma(sharpened[15]) < luma(base[15]),
+          "the dark side is pushed down (\(Int(luma(base[15]))) -> \(Int(luma(sharpened[15]))))")
+    let flat = (0..<8).allSatisfy { abs(luma(sharpened[$0]) - luma(base[$0])) <= 1 }
+    check(flat, "columns far from the edge are left alone")
+
+    // Same delta on all three channels, so hue cannot move. Checked away from the
+    // clip, where 8-bit rounding is the only difference allowed.
+    // Only where nothing is against an endpoint: a channel that clips has had its
+    // delta truncated, which is the clip's doing and not a hue shift.
+    func unclipped(_ px: (Float, Float, Float)) -> Bool {
+        [px.0, px.1, px.2].allSatisfy { $0 > 0 && $0 < 255 }
+    }
+    let sampled = [14, 15, 16, 17].filter { unclipped(base[$0]) && unclipped(sharpened[$0]) }
+    let hueHeld = !sampled.isEmpty && sampled.allSatisfy {
+        abs((sharpened[$0].0 - sharpened[$0].1) - (base[$0].0 - base[$0].1)) <= 1.5
+    }
+    check(hueHeld,
+          "sharpening does not shift hue — the detail signal is grey "
+          + "(\(sampled.count) of 4 columns clear of the clip)")
+
+    let inRange = sharpened.allSatisfy {
+        (0...255).contains($0.0) && (0...255).contains($0.1) && (0...255).contains($0.2)
+    }
+    check(inRange, "overshoot is clipped rather than wrapped")
+
+    var hard = AerochromeParams()
+    hard.adjustments.sharpening.amount = 2
+    hard.adjustments.sharpening.radius = 1
+    let harder = readRows(processor.process(params: hard)!)[4]
+    check(luma(harder[16]) >= luma(sharpened[16]), "more amount is more overshoot")
+
+    // A vertical step, which only the second convolution pass can see.
+    let vertical = makeImage(width: 8, height: 32) { _, y in
+        y < 16 ? (60, 70, 55) : (190, 200, 185)
+    }
+    check(processor.prepare(cgImage: vertical), "prepared the vertical fixture")
+    let vBase = readRows(processor.process(params: AerochromeParams())!)
+    let vSharp = readRows(processor.process(params: sharp)!)
+    check(luma(vSharp[16][4]) > luma(vBase[16][4]) && luma(vSharp[15][4]) < luma(vBase[15][4]),
+          "a vertical edge overshoots too, so both convolution passes run")
+
+    // Threshold: a low-amplitude ripple is what noise looks like, and is what the
+    // threshold is there to leave alone.
+    let ripple = makeImage(width: 64, height: 8) { x, _ in
+        let v = UInt8(128 + (x % 2 == 0 ? 4 : -4))
+        return (v, v, v)
+    }
+    check(processor.prepare(cgImage: ripple), "prepared the ripple fixture")
+    let rippleBase = readRows(processor.process(params: AerochromeParams())!)[4]
+    var noThreshold = sharp
+    noThreshold.adjustments.sharpening.threshold = 0
+    var thresholded = sharp
+    thresholded.adjustments.sharpening.threshold = 25
+    let loud = readRows(processor.process(params: noThreshold)!)[4]
+    let quiet = readRows(processor.process(params: thresholded)!)[4]
+    func meanShift(_ px: [(Float, Float, Float)]) -> Float {
+        zip(px, rippleBase).reduce(0) { $0 + abs(luma($1.0) - luma($1.1)) } / Float(px.count)
+    }
+    check(meanShift(loud) > meanShift(quiet),
+          "the threshold holds fine ripple back (\(String(format: "%.2f", meanShift(loud))) "
+          + "-> \(String(format: "%.2f", meanShift(quiet))) levels)")
+
+    // Scale: the radius is in full-resolution pixels, so a preview-sized render
+    // must not sharpen as if it were the file.
+    check(processor.prepare(cgImage: edge), "re-prepared the edge fixture")
+    processor.renderScale = 0.1
+    let downscaled = readRows(processor.process(params: sharp)!)[4]
+    check(zip(downscaled, base).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 && $0.2 == $1.2 },
+          "at 0.1 scale a 1 px radius falls below the floor and is skipped, not faked")
+    processor.renderScale = 1
+
+    // Degenerate geometry: the convolution has to survive an image narrower than
+    // its own kernel.
+    for (w, h) in [(1, 1), (1, 16), (16, 1), (3, 3)] {
+        let tiny = AerochromeProcessor()
+        check(tiny.prepare(cgImage: makeImage(width: w, height: h) { x, y in
+            (UInt8(40 + x * 8 % 200), UInt8(60 + y * 8 % 190), UInt8(80))
+        }), "\(w)x\(h): prepare")
+        check(tiny.process(params: sharp) != nil, "\(w)x\(h): sharpening a tiny image")
+    }
+
+    // A round trip, since sharpening travels in presets and in a pasted edit.
+    var carried = AerochromeAdjustments()
+    carried.sharpening = Sharpening()
+    carried.sharpening.amount = 0.8
+    carried.sharpening.radius = 1.7
+    carried.sharpening.threshold = 12
+    let data = try! JSONEncoder().encode(carried)
+    let back = try! JSONDecoder().decode(AerochromeAdjustments.self, from: data)
+    check(back.sharpening == carried.sharpening, "sharpening survives JSON")
+    let older = try! JSONDecoder().decode(
+        AerochromeAdjustments.self, from: Data(#"{"exposure":0.5}"#.utf8))
+    check(older.sharpening.isIdentity && older.exposure == 0.5,
+          "a file written before sharpening existed still loads, with it off")
 }
 
 print("histogram counts every pixel and tracks clipping")

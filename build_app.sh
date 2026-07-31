@@ -5,7 +5,19 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="IRGConverter"
 APP_BUNDLE="$PROJECT_DIR/$APP_NAME.app"
 
-echo "Building $APP_NAME..."
+# One source of truth for the version: the Swift constant the CLI also prints.
+VERSION_FILE="$PROJECT_DIR/Sources/IRGConverterCore/Version.swift"
+VERSION="$(sed -n 's/.*let current = "\([^"]*\)".*/\1/p' "$VERSION_FILE")"
+if [ -z "$VERSION" ]; then
+    echo "error: could not read the version out of $VERSION_FILE" >&2
+    exit 1
+fi
+
+# --zip additionally packages everything a download needs.
+MAKE_ZIP=0
+if [ "$1" = "--zip" ]; then MAKE_ZIP=1; fi
+
+echo "Building $APP_NAME $VERSION..."
 
 cd "$PROJECT_DIR"
 swift build -c release --product "$APP_NAME"
@@ -44,9 +56,11 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>CFBundleName</key>
     <string>$APP_NAME</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$VERSION</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$VERSION</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Licensed under the GNU Affero General Public License v3.0.</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
@@ -118,3 +132,26 @@ codesign --force --sign - "$APP_BUNDLE" >/dev/null 2>&1 || \
 
 echo "Done: $APP_BUNDLE"
 echo "     CLI at $APP_BUNDLE/Contents/MacOS/irgconvert"
+
+if [ "$MAKE_ZIP" = "1" ]; then
+    # A download that needs no further assembly: the app, the Lightroom plugin with
+    # its installer, and the documents that say what the licence is and how to use
+    # it. Built in a staging folder so the archive has one tidy top-level directory.
+    STAGE="$PROJECT_DIR/dist/$APP_NAME-$VERSION"
+    ARCHIVE="$PROJECT_DIR/dist/$APP_NAME-$VERSION.zip"
+    echo "Packaging $ARCHIVE..."
+    rm -rf "$STAGE" "$ARCHIVE"
+    mkdir -p "$STAGE"
+    # ditto rather than cp: it preserves the bundle's signature and resource forks.
+    ditto "$APP_BUNDLE" "$STAGE/$APP_NAME.app"
+    ditto "$PROJECT_DIR/LightroomPlugin" "$STAGE/LightroomPlugin"
+    cp "$PROJECT_DIR/README.md" "$PROJECT_DIR/LICENSE" "$PROJECT_DIR/CHANGELOG.md" "$STAGE/"
+    # ditto -c -k writes a zip Finder and Gatekeeper are happy with; `zip` mangles
+    # the bundle's symlinks. No --sequesterRsrc: it would add a __MACOSX folder of
+    # metadata that nothing here needs, and the ad-hoc signature lives in the
+    # bundle's own _CodeSignature folder rather than in extended attributes.
+    (cd "$PROJECT_DIR/dist" && ditto -c -k --keepParent \
+        "$APP_NAME-$VERSION" "$APP_NAME-$VERSION.zip")
+    rm -rf "$STAGE"
+    echo "Done: $ARCHIVE"
+fi

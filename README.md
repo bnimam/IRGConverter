@@ -1,6 +1,6 @@
 # IRGConverter
 
-> **⚠ Work in Progress** — This project is under active development. APIs, defaults, and behavior may change without notice.
+**Version 1.0.0** · macOS 14+ · [Changelog](CHANGELOG.md)
 
 **IRGConverter** is a native macOS application that converts (I)nfrared - (R)ed - (G)reen images to replicate the false-color film **Kodak Aerochrome**.
 
@@ -77,10 +77,11 @@ for now just Aerochrome.
 
 ## Features
 
-- **One transform, transcribed from Photoshop** — The layer workflow in [`photoshop_method.md`](photoshop_method.md), exactly: subtract infrared from the red and green groups, curves per group, then infrared→red, red→green, green→blue.
+- **One transform, transcribed from Photoshop** — A published Photoshop layer workflow, exactly: subtract infrared from the red and green groups, curves per group, then infrared→red, red→green, green→blue. Written out in full under [Algorithm](#algorithm).
 - **Batch editing** — Load a whole shoot, click between photos in the filmstrip, copy one photo's settings onto the rest, and export the lot into a folder. Each photo keeps its own edit. See [Batch editing](#batch-editing).
 - **Presets** — One shipped default look plus your own, saved as readable JSON. Export and import to share. See [Presets](#presets).
 - **Per-control guidance** — An ⓘ button on every group explains which way to move each slider and how to tell it is wrong.
+- **Sharpening** — A luminance unsharp mask with amount, radius and threshold, applied after the curves. Radius is in the exported file's pixels, and a downsampled preview says so rather than faking it. See [Sharpening](#sharpening).
 - **Black and white** — From the infrared signal alone, from either visible band, or from the composite's luminance.
 - **Adjustable preview resolution** — 600 px to full, so dragging stays responsive on big files.
 - **Look dials** — Strength, Magenta and Density over the six group controls. A pure function of the calibration, so the same settings give the same numbers on every frame. See [Look](#look).
@@ -113,7 +114,11 @@ for now just Aerochrome.
 
 ### Pre-built App
 
-You can download the pre-built app from the releases page.
+Download `IRGConverter-1.0.0.zip` from the [releases
+page](https://github.com/bnimam/IRGConverter/releases) and unzip it. Inside are the
+app, the Lightroom plugin with its installer, this README, the changelog and the
+licence. Move `IRGConverter.app` wherever you keep applications — `/Applications` is
+where the Lightroom plugin looks first.
 
 ```bash
 open IRGConverter.app
@@ -128,7 +133,7 @@ xattr -dr com.apple.quarantine IRGConverter.app
 ### Build from Source
 
 ```bash
-git clone https://github.com/your-username/IRGConverter.git
+git clone https://github.com/bnimam/IRGConverter.git
 cd IRGConverter
 ./build_app.sh
 open IRGConverter.app
@@ -139,6 +144,11 @@ Or run directly via SwiftPM:
 ```bash
 swift run
 ```
+
+`./build_app.sh --zip` additionally writes `dist/IRGConverter-<version>.zip`, the
+same archive the releases page carries. The version comes from one place,
+`Sources/IRGConverterCore/Version.swift` — the build script reads it for the
+bundle's `Info.plist` and the archive name, and `irgconvert --version` prints it.
 
 ---
 
@@ -431,6 +441,39 @@ Two separate problems needing two separate levers:
 | **Vibrance** | Saturation weighted by how unsaturated the pixel already is, so it lifts muted colour without pushing already-vivid foliage further. |
 | **Warmth / Tint** | Red/blue and green/magenta tilts. |
 
+#### Sharpening
+
+An unsharp mask, applied last — after the tone curves, because what it amplifies is
+the edge contrast of the picture as rendered. Sharpening *before* a curve that lifts
+the shadows five times over would put five times the halo there.
+
+| Control | Range | Notes |
+|---|---|---|
+| **Amount** | 0–2, default **0** | How much of the detail layer goes back. Off by default: sharpening is a per-image decision, not part of a look. Past about 1.0 edges start showing a bright outline. |
+| **Radius** | 0.3–3 px, default 1.0 | The size of detail it acts on, in pixels **of the full-size file** — see below. Around 1 px is texture; 2–3 px is local contrast, usually too much for foliage. |
+| **Threshold** | 0–25 levels, default 0 | Detail quieter than this is left alone. A full-spectrum capture developed with headroom has noise in the sky and the shadows, and sharpening amplifies noise exactly as willingly as edges. |
+
+It runs on **luminance**: blur the Rec. 709 luminance, subtract to get the detail
+layer, add the same grey delta back to all three channels. One blur instead of
+three, and it cannot shift hue — per-channel sharpening does, and the reds this look
+produces are close enough to saturation to show it as coloured fringing. The knee on
+the threshold is smooth (`d² / (d² + threshold²)`) rather than a hard cut, which
+would leave a visible boundary where detail crosses it. Overshoot is clipped back
+into range, since `vDSP_vfixru8` downstream wraps rather than saturating.
+
+Cost, measured on the 5184×3888 sample frame: **1.15 s → 1.18 s** for a full
+conversion, so about **30 ms** for the whole stage. Radius 3 costs the same as
+radius 1 — the two convolution passes are separable (2k multiplies per pixel rather
+than k²) and the scalar pass over the three planes dominates.
+
+**Radius is in the exported file's pixels, and a small preview cannot show that.**
+A 1 px radius on a 1200 px preview of a 5184 px frame is 0.23 px, which is below the
+floor where a blur and its input still differ — so the render **skips** sharpening
+there rather than exaggerating the radius to make it visible. The panel says which
+case you are in, and the honest place to judge it is **Preview → Full**. Export and
+*Send to Lightroom* always apply it, since they run at full resolution. Filmstrip
+thumbnails never show it, for the same reason at 220 px.
+
 #### Curves
 
 Master (RGB) plus per-channel R, G and B curves. Drag a point to move it, click
@@ -663,9 +706,11 @@ irgconvert --list-presets
 | `--input` / `--output` | Source, and destination. Always written as HEIC. |
 | `--preset <name>` | Start from a named preset, the default or one of yours. Omitted, the [default preset](#presets) is used — the same starting point as the app. |
 | `--strength` / `--magenta` / `--density` | The three [Look](#look) dials. They override the preset's, and take over the four controls they drive even on a literal preset. |
+| `--sharpen <0..2>` / `--sharpen-radius <px>` / `--sharpen-threshold <levels>` | [Unsharp mask](#sharpening). Amount 0 is off. Full resolution here, so the radius needs no scaling. |
 | `--mono <mode>` | `off`, `infrared`, `visibleRed`, `visibleGreen`, `luminance`. |
 | `--ir-channel <r\|g\|b>` | Which source channel holds infrared. Default `b`. |
 | `--headroom` / `--temperature` / `--tint` | RAW development. See [Adjust tab](#adjust-tab). Given here, they beat the preset's. |
+| `--version` / `--help` | Print the version, or the option list. |
 
 It reads the same presets folder as the app, so a preset saved in the GUI is
 available by name here.
@@ -676,8 +721,9 @@ available by name here.
 
 The processing pipeline operates entirely on normalized floating-point pixel buffers via Apple's Accelerate framework (vDSP).
 
-There is **one** transform, and it is a direct transcription of the Photoshop layer
-workflow in [`photoshop_method.md`](photoshop_method.md):
+There is **one** transform, and it is a direct transcription of a Photoshop layer
+workflow — isolate the three groups, subtract infrared from two of them, curve each,
+then mix the groups onto swapped output channels:
 
 ```
 irSignal = ir ^ (1 / irGamma)                                             // blue group curves
@@ -717,7 +763,11 @@ equations above — both transforms, several parameter sets, edge cases for pure
 black/white, odd image widths and row padding, plus the Look dials, the presets,
 the black-and-white modes, the viewing aids, the copy/paste groups, the batch
 export naming and both export formats — including a TIFF round trip that has to come
-back bit-identical. It is an executable rather than an XCTest
+back bit-identical. Sharpening gets its own section: overshoot on both a horizontal
+and a vertical edge (so both convolution passes are exercised), flat areas left
+alone, hue held, a kernel that sums to one, the threshold holding fine ripple back,
+1×1 and 1×16 images not crashing the convolution, and a downscaled render skipping
+the mask rather than faking it. It is an executable rather than an XCTest
 target so it runs on a bare Command Line Tools install:
 
 ```bash
@@ -739,6 +789,7 @@ In no particular order
 - [x] Batch processing (filmstrip, copy/paste of edits, folder export)
 - [x] Histogram display
 - [x] Send results back to Lightroom as 16-bit TIFFs
+- [x] Sharpening (luminance unsharp mask: amount, radius, threshold)
 - [ ] Waveform display
 - [ ] Undo history
 - [x] Infrared bleed preview to fine tune (solo + clipping viewing aids)

@@ -653,10 +653,6 @@ struct ContentView: View {
 
             Divider()
 
-            sharpeningSection
-
-            Divider()
-
             VStack(alignment: .leading, spacing: 8) {
                 Text("Curves").font(.subheadline.weight(.semibold))
                 CurvesEditor(
@@ -668,6 +664,12 @@ struct ContentView: View {
                     histogram: histogram
                 )
             }
+
+            Divider()
+
+            // Last in the panel because it is last in the pipeline — it amplifies
+            // the edge contrast of everything above it, curves included.
+            sharpeningSection
 
             Divider()
 
@@ -1498,7 +1500,13 @@ struct ContentView: View {
     // MARK: - Export
 
     private func saveImage() {
-        guard let sourceURL = inputURL else { return }
+        guard let item = current else { return }
+        let sourceURL = item.url
+        // Captured now, not read back on completion: a full-resolution export takes
+        // seconds, and clicking through the filmstrip in the meantime would
+        // otherwise stamp the green "exported" badge on whichever photo happened to
+        // be current when the write finished.
+        let photoID = item.id
         let settings = rawSettings
 
         let panel = NSSavePanel()
@@ -1536,7 +1544,7 @@ struct ContentView: View {
                 DispatchQueue.main.async {
                     isExporting = false
                     errorMessage = failure
-                    if failure == nil, let index = currentIndex {
+                    if failure == nil, let index = photos.index(of: photoID) {
                         photos[index].exportState = .done(destination)
                     }
                 }

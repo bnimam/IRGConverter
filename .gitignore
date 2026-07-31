@@ -2,7 +2,9 @@
 .swiftpm/
 IRGConverter.app
 .DS_Store
-/IRGConverter.zip
+# Release archives from `./build_app.sh --zip`
+/dist/
+/IRGConverter*.zip
 /example_output
 /example_raw
 /photoshop_method.md

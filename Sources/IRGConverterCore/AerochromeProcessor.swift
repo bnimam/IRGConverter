@@ -38,7 +38,7 @@ public enum MonochromeSource: String, CaseIterable, Equatable, Codable, Sendable
 
 /// Parameters for the IRG → Aerochrome transform.
 ///
-/// The transform is the Photoshop layer workflow from `photoshop_method.md`:
+/// The transform is a transcription of a Photoshop layer workflow:
 ///
 /// - the blue group is infrared, with a curves adjustment on it;
 /// - the red group has the infrared layer on top in **Subtract** at some opacity,
@@ -689,8 +689,10 @@ public final class AerochromeProcessor {
     /// Normalized 1-D Gaussian, an odd number of taps.
     ///
     /// Cut off at three sigma, where the tail is under 1% of the peak, and capped
-    /// so a large radius cannot turn into an unbounded kernel.
-    static func gaussianKernel(radius: Float) -> [Float] {
+    /// so a large radius cannot turn into an unbounded kernel. Public only so the
+    /// checks can assert it sums to one — a kernel that does not is a brightness
+    /// shift dressed up as a blur.
+    public static func gaussianKernel(radius: Float) -> [Float] {
         let sigma = max(radius, 0.05)
         let reach = min(max(Int((sigma * 3).rounded(.up)), 1), 32)
         var kernel = (-reach...reach).map { offset -> Float in

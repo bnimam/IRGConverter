@@ -154,7 +154,12 @@ struct Filmstrip: View {
             // always edits *something*, so the current photo stays selected.
             if selection.contains(id), selection.count > 1 {
                 selection.remove(id)
-                if currentID == id { currentID = selection.first }
+                // Hand focus to the first still-selected photo *in strip order*.
+                // `selection.first` is a Set's arbitrary order, which sent the panel
+                // to an unpredictable photo.
+                if currentID == id {
+                    currentID = photos.first { selection.contains($0.id) }?.id
+                }
             } else {
                 selection.insert(id)
                 currentID = id
