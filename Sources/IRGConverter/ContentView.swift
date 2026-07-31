@@ -25,7 +25,6 @@ struct ContentView: View {
     /// The live editing state, seeded with the default preset so an empty window
     /// and a freshly added photo agree.
     @State private var params = PhotoEdit.default.params
-    @State private var look = PhotoEdit.default.look
     @State private var rawSettings = PhotoEdit.default.raw
     @State private var histogram: Histogram?
     /// View-only diagnostics. Never saved into a preset, never applied on export.
@@ -87,33 +86,35 @@ struct ContentView: View {
     }
 
     /// What double-clicking a control resets it to: the last settings that were
-    /// applied wholesale, which is a preset, a paste, or the shipped defaults. Kept
-    /// separate from `activePresetName` — that label goes away as soon as anything
-    /// is edited by hand, but the thing a single control should revert to does not.
+    /// applied wholesale, which is a preset, a paste, or the shipped default.
     @State private var baseline = Baseline(edit: .default,
                                            name: AerochromePresetStore.default.name)
 
     struct Baseline {
         var params = PhotoEdit.default.params
-        var look = PhotoEdit.default.look
         var raw = PhotoEdit.default.raw
         /// Shown in the hint and in each control's tooltip.
         var name: String?
 
         init(edit: PhotoEdit = .default, name: String? = nil) {
             params = edit.params
-            look = edit.look
             raw = edit.raw
             self.name = name
         }
 
-        var edit: PhotoEdit { PhotoEdit(params: params, look: look, raw: raw) }
+        var edit: PhotoEdit { PhotoEdit(params: params, raw: raw) }
     }
 
     /// Held in @State so they survive view re-initialization; plain `let`s would
     /// hand out a freshly-unprepared processor if SwiftUI ever rebuilt this value.
     @State private var engine = PreviewEngine()
     @State private var thumbs = ThumbnailEngine()
+    @State private var presetPreviews = PresetPreviewEngine()
+
+    /// The preset-tiles sheet, and the renders behind it.
+    @State private var showPresetTiles = false
+    @State private var presetTiles: [String: CGImage] = [:]
+    @State private var isRenderingTiles = false
     @State private var exporter = BatchExporter()
 
     // MARK: - Current photo
@@ -160,10 +161,23 @@ struct ContentView: View {
         }
         .onChange(of: currentID) { _, id in activate(id) }
         .onChange(of: params) { _, _ in commitEdit(); reprocess() }
-        .onChange(of: look) { _, _ in commitEdit() }
         .onChange(of: rawSettings) { _, _ in commitEdit(); develop() }
         .onChange(of: aids) { _, _ in reprocess() }
         .onChange(of: previewResolution) { _, _ in develop() }
+        .sheet(isPresented: $showPresetTiles) {
+            PresetTilesView(
+                presets: store.all,
+                userPresetNames: Set(store.user.map(\.name)),
+                tiles: presetTiles,
+                activeName: activePresetName,
+                isRendering: isRenderingTiles,
+                onSelect: { preset in
+                    apply(preset)
+                    showPresetTiles = false
+                },
+                onClose: { showPresetTiles = false }
+            )
+        }
         .alert("Save Preset", isPresented: $showSavePrompt) {
             TextField("Name", text: $newPresetName)
             Button("Save") { savePreset(named: newPresetName) }
@@ -284,9 +298,9 @@ struct ContentView: View {
                 Button("Paste to All (\(photos.count))") { paste(to: photos.map(\.id)) }
                 Divider()
                 Section("Include") {
-                    Toggle("Look", isOn: $pasteOptions.look)
-                    Toggle("Channels & group curves", isOn: $pasteOptions.channels)
-                    Toggle("Tone, colour & curves", isOn: $pasteOptions.adjustments)
+                    Toggle("Aerochrome transform", isOn: $pasteOptions.transform)
+                    Toggle("Tone, colour, curves & sharpening",
+                           isOn: $pasteOptions.adjustments)
                     Toggle("RAW development", isOn: $pasteOptions.rawDevelopment)
                 }
             }
@@ -428,10 +442,6 @@ struct ContentView: View {
 
                 Divider()
 
-                lookSection
-
-                Divider()
-
 
                 VStack(alignment: .leading, spacing: 8) {
                     sectionHeader("Source Channels", info: .sourceChannels)
@@ -472,20 +482,6 @@ struct ContentView: View {
                     mapPicker("Red ←", \.outputMapR)
                     mapPicker("Green ←", \.outputMapG)
                     mapPicker("Blue ←", \.outputMapB)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("Black & White", info: .monochrome)
-                    Picker("", selection: Binding(
-                        get: { params.monochrome },
-                        set: { setParam(\.monochrome, $0) }
-                    )) {
-                        ForEach(MonochromeSource.allCases, id: \.self) {
-                            Text($0.label).tag($0)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
                 }
 
                 Divider()
@@ -794,7 +790,7 @@ struct ContentView: View {
                 Spacer()
                 Menu("Manage") {
                     Button("Save Current Settings…") {
-                        newPresetName = store.uniqueName(for: activePresetName ?? "My Look")
+                        newPresetName = store.uniqueName(for: activePresetName ?? "My Preset")
                         showSavePrompt = true
                     }
                     Button("Export Current Settings…") { exportCurrentSettings() }
@@ -827,6 +823,12 @@ struct ContentView: View {
                 }
             }
 
+            Button("Preview Presets…") { openPresetTiles() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!hasImage)
+                .help("See every preset applied to this photo, side by side")
+
             if photos.count > 1 {
                 Button("Apply to Selected (\(selection.count))") {
                     applyCurrentToSelection()
@@ -854,57 +856,6 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Look
-
-    private var lookSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Look", info: .look)
-            lookSlider("Strength", \.strength, LookSettings.strengthRange)
-            lookSlider("Magenta", \.magenta, LookSettings.magentaRange)
-            lookSlider("Density", \.density, LookSettings.densityRange)
-            Text("These three drive the six controls below. Move one of those by "
-                 + "hand and it stops following, until a Look slider or a preset "
-                 + "sets it again.")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    /// A Look dial. Setting one recomputes the transform controls from the
-    /// calibration, so what the sliders below show is always what is in use.
-    private func lookSlider(_ label: String,
-                            _ key: WritableKeyPath<LookSettings, Float>,
-                            _ range: ClosedRange<Float>) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(.caption)
-                .frame(width: 66, alignment: .leading)
-            ResettableSlider(
-                value: Binding(
-                    get: { Double(look[keyPath: key]) },
-                    set: { setLook(key, Float($0)) }
-                ),
-                range: Double(range.lowerBound)...Double(range.upperBound),
-                onReset: { setLook(key, baseline.look[keyPath: key]) }
-            )
-            .frame(minWidth: 90, maxHeight: 20)
-            .disabled(!hasImage)
-            Text(String(format: "%.2f", look[keyPath: key]))
-                .font(.caption.monospaced())
-                .frame(width: 44, alignment: .trailing)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { setLook(key, baseline.look[keyPath: key]) }
-        .help(resetHint(String(format: "%.2f", baseline.look[keyPath: key])))
-    }
-
-    private func setLook<V>(_ key: WritableKeyPath<LookSettings, V>, _ value: V) {
-        look[keyPath: key] = value
-        params = look.applied(to: params)
-        syncPresetLabel()
-    }
-
     /// Keep the preset label honest. It claims the current settings *are* the
     /// named preset, so it goes away when anything is edited — and comes back if
     /// the settings match again, which is exactly what happens after
@@ -916,23 +867,18 @@ struct ContentView: View {
     /// Record what single-control resets should revert to. Called whenever
     /// settings are applied as a whole.
     private func captureBaseline(name: String?) {
-        baseline = Baseline(edit: PhotoEdit(params: params, look: look, raw: rawSettings),
-                            name: name)
-    }
-
-    private func syncPresetLabel() {
-        statusMessage = nil
-        if let name = baseline.name, store.preset(named: name) != nil,
-           params == baseline.params, look == baseline.look {
-            activePresetName = name
-        } else {
-            activePresetName = nil
-        }
+        baseline = Baseline(edit: PhotoEdit(params: params, raw: rawSettings), name: name)
     }
 
     private func setParam<V>(_ key: WritableKeyPath<AerochromeParams, V>, _ value: V) {
         params[keyPath: key] = value
-        syncPresetLabel()
+        // The preset menu keeps naming the preset this photo was started from, even
+        // once a slider has moved. It used to clear itself the moment anything
+        // differed, which meant the common case — apply a preset, then adjust one control
+        // for this frame — left the menu reading "Choose…" and nothing on screen said
+        // where the settings came from. It is a starting point, not a claim that the
+        // numbers are untouched.
+        statusMessage = nil
     }
 
     /// One slider row bound to a parameter by key path. Double-click reverts just
@@ -1205,7 +1151,6 @@ struct ContentView: View {
         }
         let item = photos[index]
         params = item.edit.params
-        look = item.edit.look
         rawSettings = item.edit.raw
         baseline = Baseline(edit: item.baseline, name: item.baselineName)
         activePresetName = item.presetName
@@ -1222,7 +1167,7 @@ struct ContentView: View {
     /// which switching photos would queue a pointless thumbnail render each time.
     private func commitEdit() {
         guard let index = currentIndex else { return }
-        let edit = PhotoEdit(params: params, look: look, raw: rawSettings)
+        let edit = PhotoEdit(params: params, raw: rawSettings)
         photos[index].baseline = baseline.edit
         photos[index].baselineName = baseline.name
         photos[index].presetName = activePresetName
@@ -1298,10 +1243,28 @@ struct ContentView: View {
 
     // MARK: - Preset actions
 
+    /// Open the tiles sheet and render it from the preview already in memory.
+    ///
+    /// Nothing is decoded: `previewInput` is the developed photo the preview itself
+    /// is computed from, so the tiles cost one downsample plus one transform per
+    /// preset.
+    private func openPresetTiles() {
+        guard let source = previewInput else { return }
+        presetTiles = [:]
+        isRenderingTiles = true
+        showPresetTiles = true
+        presetPreviews.render(
+            source: source,
+            presets: store.all,
+            nativeLongEdge: sourceSize.map { max($0.width, $0.height) },
+            tile: { name, image in presetTiles[name] = image },
+            finished: { isRenderingTiles = false }
+        )
+    }
+
     private func apply(_ preset: AerochromePreset) {
         activePresetName = preset.name
         statusMessage = nil
-        look = preset.look
 
         // Development settings only mean something for a RAW file; applying them
         // to a JPEG would silently do nothing and confuse the panel.
@@ -1324,7 +1287,7 @@ struct ContentView: View {
     }
 
     private func currentPreset(named name: String) -> AerochromePreset {
-        AerochromePreset(name: name, params: params, look: look,
+        AerochromePreset(name: name, params: params,
                          raw: isRAW ? rawSettings : nil)
     }
 
@@ -1350,7 +1313,7 @@ struct ContentView: View {
     }
 
     private func exportCurrentSettings() {
-        let name = activePresetName ?? "My Look"
+        let name = activePresetName ?? "My Preset"
         export([currentPreset(named: name)], suggestedName: name)
     }
 

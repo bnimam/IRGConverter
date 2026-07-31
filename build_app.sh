@@ -146,11 +146,15 @@ if [ "$MAKE_ZIP" = "1" ]; then
     ditto "$APP_BUNDLE" "$STAGE/$APP_NAME.app"
     ditto "$PROJECT_DIR/LightroomPlugin" "$STAGE/LightroomPlugin"
     cp "$PROJECT_DIR/README.md" "$PROJECT_DIR/LICENSE" "$PROJECT_DIR/CHANGELOG.md" "$STAGE/"
-    # ditto -c -k writes a zip Finder and Gatekeeper are happy with; `zip` mangles
-    # the bundle's symlinks. No --sequesterRsrc: it would add a __MACOSX folder of
-    # metadata that nothing here needs, and the ad-hoc signature lives in the
-    # bundle's own _CodeSignature folder rather than in extended attributes.
-    (cd "$PROJECT_DIR/dist" && ditto -c -k --keepParent \
+    # --norsrc --noextattr is not tidiness, it is required. Without them ditto stores
+    # each file's metadata as an AppleDouble member, and plain `unzip` — which is what
+    # someone at a terminal will reach for — writes those out as real `._*` files
+    # *inside* the bundle. That breaks the code signature seal, and the app is then
+    # refused as damaged. Measured both ways: with the flags, `unzip` and
+    # `ditto -x -k` both produce a bundle that passes `codesign --verify --strict`;
+    # without them, only `ditto` does. `zip -r` would also be clean but does not
+    # preserve bundle symlinks in general.
+    (cd "$PROJECT_DIR/dist" && ditto -c -k --norsrc --noextattr --keepParent \
         "$APP_NAME-$VERSION" "$APP_NAME-$VERSION.zip")
     rm -rf "$STAGE"
     echo "Done: $ARCHIVE"

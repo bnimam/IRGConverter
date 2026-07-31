@@ -3,7 +3,7 @@
 // Exists so something other than the GUI can drive the transform — the Lightroom
 // plugin shells out to this. Also useful for batch work from a shell.
 //
-//   irgconvert --input in.ORF --output out.heic --strength 0.5
+//   irgconvert --input in.ORF --output out.heic --preset "Aerochrome Bold"
 
 import AppKit
 import CoreImage
@@ -18,9 +18,16 @@ struct Options {
     var input: URL?
     var output: URL?
     var preset: String?
-    var look = LookSettings()
     var raw = RawDevelopSettings()
-    var monochrome: MonochromeSource = .off
+    /// Transform controls given on the command line, applied over the preset's.
+    /// Nil means "leave the preset's value alone" — 0 is a legitimate setting for
+    /// a subtraction, so absence cannot be spelled with a number.
+    var gammaBy: Float?
+    var subtractIRRed: Float?
+    var gammaRx: Float?
+    var gammaGx: Float?
+    var subtractIRGreen: Float?
+    var overallGamma: Float?
     /// Nil unless a `--sharpen*` flag was given, so a preset's own sharpening is
     /// left alone otherwise.
     var sharpening: Sharpening?
@@ -42,13 +49,16 @@ OPTIONS
   --output <path>       Destination. Always written as HEIC.
   --preset <name>       Start from a named preset. See --list-presets.
                         Default: “Aerochrome Magenta”, as in the app.
-  --strength <0..1>     Look strength. Default 0.5.
-  --magenta <-1..1>     Foliage between pure red and magenta. Default 0.
-  --density <-1..1>     Overall density. Default 0.
+  --ir-gamma <0.1..10>  Curve on the infrared group. The strongest single control.
+  --red-subtract <0..2> How much infrared comes out of the red group.
+  --red-gamma <0.1..10> Curve on the red group, above its subtract.
+  --green-gamma         Curve on the green group, below its subtract.
+  --green-subtract      How much infrared comes out of the green group. Lower
+                        leaves foliage pinker, higher takes it toward pure red.
+  --output-gamma        The final curve over the composite. Lower is denser.
   --sharpen <0..2>      Unsharp mask amount. 0 (default) is off.
   --sharpen-radius <px> Radius in pixels. Default 1.0.
   --sharpen-threshold   Leave detail below this many levels of 255 alone. Default 0.
-  --mono <mode>         off | infrared | visibleRed | visibleGreen | luminance
   --ir-channel <r|g|b>  Which source channel holds infrared. Default b.
   --headroom <stops>    RAW highlight headroom. Default -1.0.
   --temperature <K>     RAW colour temperature. Implies non-neutral balance.
@@ -85,9 +95,12 @@ func parse(_ arguments: [String]) -> Options {
         case "--input", "-i": o.input = URL(fileURLWithPath: next("--input"))
         case "--output", "-o": o.output = URL(fileURLWithPath: next("--output"))
         case "--preset", "-p": o.preset = next("--preset")
-        case "--strength": o.look.strength = float("--strength")
-        case "--magenta": o.look.magenta = float("--magenta")
-        case "--density": o.look.density = float("--density")
+        case "--ir-gamma": o.gammaBy = float("--ir-gamma")
+        case "--red-subtract": o.subtractIRRed = float("--red-subtract")
+        case "--red-gamma": o.gammaRx = float("--red-gamma")
+        case "--green-gamma": o.gammaGx = float("--green-gamma")
+        case "--green-subtract": o.subtractIRGreen = float("--green-subtract")
+        case "--output-gamma": o.overallGamma = float("--output-gamma")
         case "--headroom": o.raw.exposure = float("--headroom")
         case "--temperature":
             o.raw.temperature = float("--temperature")
@@ -95,12 +108,6 @@ func parse(_ arguments: [String]) -> Options {
         case "--tint":
             o.raw.tint = float("--tint")
             explicitBalance = true
-        case "--mono":
-            let name = next("--mono")
-            guard let mode = MonochromeSource(rawValue: name) else {
-                fail("--mono: unknown mode '\(name)'")
-            }
-            o.monochrome = mode
         case "--ir-channel":
             let name = next("--ir-channel").lowercased()
             guard let index = ["r": 0, "g": 1, "b": 2][name] else {
@@ -166,32 +173,20 @@ if let name = options.preset {
     preset = AerochromePresetStore.default
 }
 
-var params = preset.resolved
-var look = preset.look
+var params = preset.params
 // A development flag given on the command line beats the preset's, which is the
-// only way to override it — every preset now carries development settings.
+// only way to override it — every preset carries development settings.
 var raw = options.raw
 if let presetRaw = preset.raw, options.raw == RawDevelopSettings() { raw = presetRaw }
 
-// A dial given on the command line beats the preset's, and takes over the four
-// controls it drives even on a preset whose numbers are otherwise literal.
-let dialDefaults = LookSettings()
-var dialGiven = false
-if options.look.strength != dialDefaults.strength {
-    look.strength = options.look.strength
-    dialGiven = true
-}
-if options.look.magenta != dialDefaults.magenta {
-    look.magenta = options.look.magenta
-    dialGiven = true
-}
-if options.look.density != dialDefaults.density {
-    look.density = options.look.density
-    dialGiven = true
-}
-if preset.usesLook || dialGiven { params = look.applied(to: params) }
+// Transform controls given on the command line, over the preset's.
+if let v = options.gammaBy { params.gammaBy = v }
+if let v = options.subtractIRRed { params.subtractIRRed = v }
+if let v = options.gammaRx { params.gammaRx = v }
+if let v = options.gammaGx { params.gammaGx = v }
+if let v = options.subtractIRGreen { params.subtractIRGreen = v }
+if let v = options.overallGamma { params.overallGamma = v }
 
-if options.monochrome != .off { params.monochrome = options.monochrome }
 // Full resolution here, so the radius is already in the units it is defined in and
 // the processor's `renderScale` stays 1.
 if let sharpening = options.sharpening { params.adjustments.sharpening = sharpening }
@@ -218,8 +213,8 @@ do {
     if !options.quiet {
         print("\(input.lastPathComponent) -> \(output.lastPathComponent)  "
               + "\(rendered.width)x\(rendered.height)  "
-              + "strength \(String(format: "%.2f", look.strength))"
-              + (options.preset.map { "  preset \($0)" } ?? ""))
+              + "preset \(preset.name)  "
+              + "IR gamma \(String(format: "%.2f", params.gammaBy))")
     }
 } catch {
     fail(error.localizedDescription)

@@ -3,39 +3,6 @@ import CoreGraphics
 import CoreImage
 import Foundation
 
-/// Render the result as grey instead of false colour, and from which signal.
-public enum MonochromeSource: String, CaseIterable, Equatable, Codable, Sendable {
-    case off
-    /// The infrared signal alone — classic black-and-white infrared.
-    case infrared
-    case visibleRed
-    case visibleGreen
-    /// Rec. 709 luminance of the false-colour composite, so the channel map and
-    /// every curve still shape the result.
-    case luminance
-
-    public var label: String {
-        switch self {
-        case .off: return "Off (colour)"
-        case .infrared: return "Infrared"
-        case .visibleRed: return "Visible red"
-        case .visibleGreen: return "Visible green"
-        case .luminance: return "Composite luminance"
-        }
-    }
-
-    /// Index into the signal triple: 0 = visible red, 1 = visible green,
-    /// 2 = infrared. Nil for the modes that are not a single signal.
-    var signalIndex: Int? {
-        switch self {
-        case .infrared: return 2
-        case .visibleRed: return 0
-        case .visibleGreen: return 1
-        case .off, .luminance: return nil
-        }
-    }
-}
-
 /// Parameters for the IRG → Aerochrome transform.
 ///
 /// The transform is a transcription of a Photoshop layer workflow:
@@ -91,10 +58,8 @@ public struct AerochromeParams: Equatable, Codable, Sendable {
     public var outputMapG: Int = 0
     public var outputMapB: Int = 1
 
-    public var monochrome: MonochromeSource = .off
-
-    /// Ordinary photo edits applied after the transform. Left untouched by the
-    /// auto-tune, so anything dialled in here survives pressing Auto.
+    /// Ordinary photo edits applied after the transform — see
+    /// `AerochromeAdjustments`.
     public var adjustments = AerochromeAdjustments()
 
     public init() {}
@@ -124,7 +89,6 @@ public struct AerochromeParams: Equatable, Codable, Sendable {
         outputMapR = int(.outputMapR, d.outputMapR)
         outputMapG = int(.outputMapG, d.outputMapG)
         outputMapB = int(.outputMapB, d.outputMapB)
-        monochrome = (try? c.decode(MonochromeSource.self, forKey: .monochrome)) ?? d.monochrome
         adjustments = (try? c.decode(AerochromeAdjustments.self, forKey: .adjustments)) ?? d.adjustments
     }
 }
@@ -296,20 +260,14 @@ public final class AerochromeProcessor {
 
         build(p, count: &count32, nLen: nLen)
 
-        // Channel mapping + the final curves layer. A soloed signal, or a
-        // single-signal monochrome mode, replaces the map on all three outputs.
+        // Channel mapping + the final curves layer. A soloed signal replaces the
+        // map on all three outputs, which is what renders it as grey.
         var og: Float = 1.0 / max(p.overallGamma, 0.0001)
         vDSP_vfill(&og, &gammaFill, 1, nLen)
-        let override = aids.solo.signalIndex ?? p.monochrome.signalIndex
+        let override = aids.solo.signalIndex
         applyGamma(from: override ?? p.outputMapR, into: &finalR, count: &count32)
         applyGamma(from: override ?? p.outputMapG, into: &finalG, count: &count32)
         applyGamma(from: override ?? p.outputMapB, into: &finalB, count: &count32)
-
-        // Luminance monochrome has to come after the map, since the map is what
-        // decides which signal contributes how much light.
-        if p.monochrome == .luminance, aids.solo == .off {
-            flattenToLuminance(nLen: nLen)
-        }
 
         // Soloing shows one signal as it came out of the transform, so the photo
         // edits are bypassed rather than layered on top of the diagnostic.
@@ -369,17 +327,6 @@ public final class AerochromeProcessor {
         vDSP_vsmul(sb, 1, &subG, &tmp, 1, nLen)
         vDSP_vsub(tmp, 1, greenCurved, 1, &tmp2, 1, nLen)
         vDSP_vthr(tmp2, 1, &zero, &sg, 1, nLen)
-    }
-
-    private func flattenToLuminance(nLen: vDSP_Length) {
-        var wr: Float = 0.2126, wg: Float = 0.7152, wb: Float = 0.0722
-        vDSP_vsmul(finalR, 1, &wr, &tmp, 1, nLen)
-        vDSP_vsma(finalG, 1, &wg, tmp, 1, &tmp2, 1, nLen)
-        vDSP_vsma(finalB, 1, &wb, tmp2, 1, &tmp, 1, nLen)
-        var unity: Float = 1
-        vDSP_vsmul(tmp, 1, &unity, &finalR, 1, nLen)
-        vDSP_vsmul(tmp, 1, &unity, &finalG, 1, nLen)
-        vDSP_vsmul(tmp, 1, &unity, &finalB, 1, nLen)
     }
 
     // MARK: - Output
@@ -750,11 +697,9 @@ public final class AerochromeProcessor {
 
         var og: Float = 1.0 / max(p.overallGamma, 0.0001)
         vDSP_vfill(&og, &gammaFill, 1, nLen)
-        let override = p.monochrome.signalIndex
-        applyGamma(from: override ?? p.outputMapR, into: &finalR, count: &count32)
-        applyGamma(from: override ?? p.outputMapG, into: &finalG, count: &count32)
-        applyGamma(from: override ?? p.outputMapB, into: &finalB, count: &count32)
-        if p.monochrome == .luminance { flattenToLuminance(nLen: nLen) }
+        applyGamma(from: p.outputMapR, into: &finalR, count: &count32)
+        applyGamma(from: p.outputMapG, into: &finalG, count: &count32)
+        applyGamma(from: p.outputMapB, into: &finalB, count: &count32)
 
         applyAdjustments(p.adjustments, nLen: nLen)
         finishPlanes(adjustments: p.adjustments, nLen: nLen)

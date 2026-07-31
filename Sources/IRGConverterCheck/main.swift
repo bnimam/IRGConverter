@@ -50,30 +50,8 @@ func reference(srcR: Float, srcG: Float, srcB: Float, p: AerochromeParams) -> (F
         min(max(powf(max(signals[min(max(map, 0), 2)], 0), e), 0), 1)
     }
 
-    var out: [Float]
-    if let single = p.monochrome.referenceSignalIndex {
-        let v = signal(single)
-        out = [v, v, v]
-    } else {
-        out = [signal(p.outputMapR), signal(p.outputMapG), signal(p.outputMapB)]
-        if p.monochrome == .luminance {
-            let luma = 0.2126 * out[0] + 0.7152 * out[1] + 0.0722 * out[2]
-            out = [luma, luma, luma]
-        }
-    }
+    let out = [signal(p.outputMapR), signal(p.outputMapG), signal(p.outputMapB)]
     return ((out[0] * 255).rounded(), (out[1] * 255).rounded(), (out[2] * 255).rounded())
-}
-
-extension MonochromeSource {
-    /// Mirrors the processor's mapping override, for the reference above.
-    var referenceSignalIndex: Int? {
-        switch self {
-        case .infrared: return 2
-        case .visibleRed: return 0
-        case .visibleGreen: return 1
-        case .off, .luminance: return nil
-        }
-    }
 }
 
 // MARK: - Fixtures
@@ -180,19 +158,10 @@ do {
     var remapped = heavySubtraction
     remapped.outputMapR = 1; remapped.outputMapG = 2; remapped.outputMapB = 0
 
-    // Each monochrome mode goes through a different path in the mapping stage.
-    var monoIR = AerochromeParams()
-    monoIR.monochrome = .infrared
-    var monoLuma = AerochromeParams()
-    monoLuma.monochrome = .luminance
-    var monoGreen = AerochromeParams()
-    monoGreen.monochrome = .visibleGreen
-
     let processor = AerochromeProcessor()
     check(processor.prepare(cgImage: makeImage(samples)), "prepare succeeds")
 
-    for (v, p) in [AerochromeParams(), tweaked, heavySubtraction, remapped,
-                   monoIR, monoLuma, monoGreen].enumerated() {
+    for (v, p) in [AerochromeParams(), tweaked, heavySubtraction, remapped].enumerated() {
         guard let out = processor.process(params: p) else {
             check(false, "variant \(v) produced an image")
             continue
@@ -245,10 +214,8 @@ do {
     custom.gammaRx = 3.21
     custom.subtractIRRed = 1.42
     custom.outputMapB = 2
-    custom.monochrome = .luminance
-    let preset = AerochromePreset(
-        name: "Round Trip", params: custom,
-        look: LookSettings(strength: 0.77, magenta: -0.3, density: 0.4))
+    let preset = AerochromePreset(name: "Round Trip", params: custom,
+                                  raw: RawDevelopSettings(), notes: "a note")
     do { try store.save(preset) } catch { check(false, "save threw: \(error)") }
 
     let reloaded = AerochromePresetStore(directory: tmp)
@@ -257,9 +224,8 @@ do {
         exit(1)
     }
     check(back.params == custom, "every parameter round-trips")
-    check(back.look.strength == 0.77 && back.look.magenta == -0.3 && back.look.density == 0.4,
-          "the look dials round-trip")
-    check(back.params.monochrome == .luminance, "monochrome mode round-trips")
+    check(back.raw == RawDevelopSettings() && back.notes == "a note",
+          "development settings and the note round-trip")
 
     let exported = tmp.appendingPathComponent("bundle.irgpreset")
     do { try reloaded.export(reloaded.user, to: exported) } catch { check(false, "export threw: \(error)") }
@@ -312,19 +278,19 @@ do {
         check(!blown && !dead, "\(preset.name) is neither all-white nor all-black")
     }
 
-    check(store.builtIn.count == 1 && store.builtIn[0].name == "Aerochrome Magenta",
-          "one built-in preset, the default")
+    check(store.builtIn.count >= 2, "ships a family of presets, \(store.builtIn.count) of them")
+    check(store.builtIn.first?.name == "Aerochrome Magenta",
+          "the default is the one at the top of the menu")
+    check(Set(store.builtIn.map(\.name)).count == store.builtIn.count,
+          "no two built-ins share a name")
+    check(store.builtIn.allSatisfy { $0.notes?.isEmpty == false }, "each one says what it does")
 }
 
 print("the default preset is what a photo starts on")
 do {
     let preset = AerochromePresetStore.default
-    // Hand-tuned, so the numbers must survive resolution untouched — with
-    // `usesLook` on, four of them would come back as the calibration's instead.
-    check(!preset.usesLook, "taken as written rather than driven by the dials")
-    check(preset.resolved == preset.params, "resolves to exactly its own numbers")
-    check(preset.look.applied(to: preset.params) != preset.params,
-          "no dial combination reproduces it — which is why it is literal")
+    check(preset.name == "Aerochrome Magenta", "the default is Aerochrome Magenta")
+    check(preset.resolved == preset.params, "a preset is its own numbers, nothing derived")
 
     check(PhotoEdit.default == PhotoEdit(preset: preset, raw: RawDevelopSettings()),
           "a fresh photo's edit is that preset")
@@ -717,20 +683,18 @@ do {
     check(back.raw == raw, "RAW development settings round-trip")
     check(back.raw?.useNeutralBalance == false, "the neutral-balance flag round-trips")
 
-    // Files written against the measurement-based auto-tune stored an `options`
-    // object and sometimes carried the leans as their own fields. Those must map
-    // onto the look dials rather than being dropped.
+    // Files from the builds that had Look dials carry `look`, `usesLook` and, older
+    // still, an `options` object. None of those fields exist any more. What must not
+    // happen is a failed load: the numbers those builds put on the sliders are in
+    // `params`, so a preset from either era still means what it meant.
     let legacy = tmp.appendingPathComponent("legacy.irgpreset")
-    try? #"{"name":"Legacy Lean","deriveFromImage":true,"options":{"lookStrength":0.8},"greenSubtractScale":0.25,"outputGamma":0.925}"#
+    try? #"{"name":"Legacy Dials","usesLook":true,"look":{"strength":0.8,"magenta":0.6,"density":0.3},"options":{"lookStrength":0.8},"params":{"gammaBy":1.4,"subtractIRGreen":0.42}}"#
         .write(to: legacy, atomically: true, encoding: .utf8)
     if let added = try? reloaded.importPresets(from: legacy), let old = added.first {
-        check(old.look.strength == 0.8, "a legacy look strength carries over")
-        check(old.look.magenta > 0.4,
-              "a legacy green-subtract scale below 1 becomes a positive magenta lean, got "
-              + "\(String(format: "%.2f", old.look.magenta))")
-        check(old.look.density > 0.4,
-              "a legacy output gamma below the calibration becomes positive density, got "
-              + "\(String(format: "%.2f", old.look.density))")
+        check(old.name == "Legacy Dials", "a preset from the Look-dial era still loads")
+        check(old.params.gammaBy == 1.4 && old.params.subtractIRGreen == 0.42,
+              "and keeps the numbers that were on its sliders")
+        check(old.resolved == old.params, "nothing is re-derived from the dropped dials")
     } else {
         check(false, "legacy preset imported")
     }
@@ -802,74 +766,125 @@ do {
           "gamma above 1 brightens the infrared group")
 }
 
-print("look dials are a pure function of the calibration")
+print("each preset in the family moves in the direction its notes claim")
 do {
-    // No image is involved now, which is the point: the same dials give the same
-    // numbers on every frame. The measurement-based auto-tune could not promise that.
-    let mid = LookSettings()
-    check(mid.strength == 0.5, "strength defaults to the middle")
-    checkClose(mid.gammaBy, Float(AerochromeCalibration.gammaBy), tolerance: 0.001,
-               "the midpoint reproduces the calibrated IR gamma")
-    checkClose(mid.subtractIRRed, Float(AerochromeCalibration.subtractIRRed), tolerance: 0.005,
-               "the midpoint reproduces the calibrated red subtraction")
-    checkClose(mid.subtractIRGreen, Float(AerochromeCalibration.subtractIRGreen), tolerance: 0.005,
-               "the midpoint reproduces the calibrated green subtraction")
-    checkClose(mid.overallGamma, Float(AerochromeCalibration.overallGamma), tolerance: 0.005,
-               "the midpoint reproduces the calibrated output gamma")
-
-    // Strength must move monotonically, and over a range wide enough to matter —
-    // the old auto-tune only shifted its anchor by 0.15 either way and barely
-    // changed the picture from end to end.
-    var gammas: [Float] = []
-    var subs: [Float] = []
-    for s in [Float(0), 0.25, 0.5, 0.75, 1.0] {
-        let look = LookSettings(strength: s)
-        gammas.append(look.gammaBy)
-        subs.append(look.subtractIRRed)
-        print("  strength \(String(format: "%.2f", s)):  IR gamma \(String(format: "%5.2f", look.gammaBy))"
-              + "  subtract \(String(format: "%.2f", look.subtractIRRed))"
-              + "  output gamma \(String(format: "%.2f", look.overallGamma))")
-    }
-    check(zip(gammas, gammas.dropFirst()).allSatisfy { $0 < $1 }, "IR gamma rises with strength")
-    check(zip(subs, subs.dropFirst()).allSatisfy { $0 < $1 }, "subtraction rises with strength")
-    check(gammas.last! / gammas.first! > 8,
-          "strength spans more than 8x in IR gamma, got \(String(format: "%.1f", gammas.last! / gammas.first!))x")
-    check(subs.last! / subs.first! > 4,
-          "strength spans more than 4x in subtraction, got \(String(format: "%.1f", subs.last! / subs.first!))x")
-
-    check(LookSettings(magenta: 1).subtractIRGreen < LookSettings(magenta: -1).subtractIRGreen,
-          "positive magenta subtracts less from the green group")
-    check(LookSettings(density: 1).overallGamma < LookSettings(density: -1).overallGamma,
-          "positive density renders denser")
-    check(LookSettings(magenta: 1).subtractIRRed == LookSettings(magenta: -1).subtractIRRed,
-          "magenta leaves the red group alone")
-
-    var allInRange = true
-    for s in stride(from: Float(0), through: 1, by: 0.05) {
-        for lean in [Float(-1), 0, 1] {
-            let p = LookSettings(strength: s, magenta: lean, density: lean)
-                .applied(to: AerochromeParams())
-            if !((0.1...10).contains(p.gammaBy) && (0...2).contains(p.subtractIRRed)
-                 && (0...2).contains(p.subtractIRGreen) && (0.25...4).contains(p.overallGamma)) {
-                allInRange = false
-            }
+    // Foliage alternating with sky: bright infrared and dim visible for the leaves,
+    // the other way round for the sky. That is the signal the presets differ on, so
+    // a flat ramp would not tell them apart.
+    var pixels: [(UInt8, UInt8, UInt8)] = []
+    for i in 0..<120 {
+        if i % 2 == 0 {
+            pixels.append((UInt8(70 + i / 4), UInt8(60 + i / 6), UInt8(190 + i / 8)))  // leaf
+        } else {
+            pixels.append((UInt8(120 + i / 4), UInt8(150 + i / 4), UInt8(90 + i / 8))) // sky
         }
     }
-    check(allInRange, "every dial combination stays inside the slider ranges")
+    let processor = AerochromeProcessor()
+    check(processor.prepare(cgImage: makeImage(pixels)), "prepared the foliage-and-sky fixture")
 
-    let look = LookSettings(strength: 0.7, magenta: 0.4, density: -0.2)
-    let once = look.applied(to: AerochromeParams())
-    check(look.applied(to: once) == once, "applying a look is idempotent")
+    let store = AerochromePresetStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("irgconverter-check-family"))
+    func render(_ name: String) -> [(Float, Float, Float)]? {
+        guard let preset = store.preset(named: name) else {
+            check(false, "\(name) exists")
+            return nil
+        }
+        guard let out = processor.process(params: preset.resolved) else {
+            check(false, "\(name) rendered")
+            return nil
+        }
+        return readPixels(out)
+    }
+    func mean(_ px: [(Float, Float, Float)], _ pick: ((Float, Float, Float)) -> Float) -> Float {
+        px.reduce(0) { $0 + pick($1) } / Float(px.count)
+    }
+    func chroma(_ p: (Float, Float, Float)) -> Float {
+        max(p.0, max(p.1, p.2)) - min(p.0, min(p.1, p.2))
+    }
+    func luma(_ p: (Float, Float, Float)) -> Float { 0.2126 * p.0 + 0.7152 * p.1 + 0.0722 * p.2 }
 
-    var custom = AerochromeParams()
-    custom.sourceIR = 1
-    custom.outputMapG = 2
-    custom.monochrome = .luminance
-    custom.adjustments.exposure = 0.8
-    let applied = look.applied(to: custom)
-    check(applied.sourceIR == 1 && applied.outputMapG == 2
-          && applied.monochrome == .luminance && applied.adjustments.exposure == 0.8,
-          "a look leaves source channels, output map, monochrome and photo edits alone")
+    guard let base = render("Aerochrome Magenta") else { exit(1) }
+
+    if let red = render("Aerochrome Red") {
+        // Blue out is the visible-green signal, and that is what the green
+        // subtraction eats — less blue in the leaves is less pink.
+        check(mean(red, \.2) < mean(base, \.2),
+              "Red pulls the blue output down (\(Int(mean(base, \.2))) -> \(Int(mean(red, \.2))))")
+    }
+    if let bold = render("Aerochrome Bold") {
+        check(mean(bold, \.0) > mean(base, \.0),
+              "Bold brightens the red output (\(Int(mean(base, \.0))) -> \(Int(mean(bold, \.0))))")
+        check(mean(bold, chroma) > mean(base, chroma),
+              "and separates the channels further "
+              + "(\(Int(mean(base, chroma))) -> \(Int(mean(bold, chroma))))")
+    }
+    if let subtle = render("Aerochrome Subtle") {
+        check(mean(subtle, chroma) < mean(base, chroma),
+              "Subtle separates less (\(Int(mean(base, chroma))) -> \(Int(mean(subtle, chroma))))")
+    }
+    if let deep = render("Aerochrome Deep") {
+        check(mean(deep, luma) < mean(base, luma),
+              "Deep renders denser (\(Int(mean(base, luma))) -> \(Int(mean(deep, luma))))")
+    }
+    if let swapped = render("Pre-swapped IRG"), let preset = store.preset(named: "Pre-swapped IRG") {
+        check(preset.params.sourceIR == 0, "Pre-swapped IRG reads infrared from red")
+        check(zip(swapped, base).contains { $0.0 != $1.0 || $0.1 != $1.1 || $0.2 != $1.2 },
+              "and therefore renders differently")
+    }
+
+    // Everything else about a sibling must match the default, so the family stays a
+    // family and each preset's notes are the whole story of what it changes.
+    for preset in store.builtIn where preset.name != "Aerochrome Magenta" {
+        let d = AerochromePresetStore.default.params
+        let p = preset.params
+        let sameRoles = p.sourceIR == d.sourceIR || preset.name == "Pre-swapped IRG"
+        check(sameRoles, "\(preset.name): only the pre-swapped preset moves the source roles")
+        check(p.outputMapR == d.outputMapR && p.outputMapG == d.outputMapG
+              && p.outputMapB == d.outputMapB,
+              "\(preset.name): keeps the Aerochrome channel map")
+        check(preset.raw == RawDevelopSettings(),
+              "\(preset.name): carries the measured development defaults")
+    }
+}
+
+print("the tiles sheet can render every preset from one prepared buffer")
+do {
+    // What `PresetPreviewEngine` does: prepare once at tile size, then run each
+    // preset's parameters over the same planes. If that ever stopped working the
+    // sheet would show blanks, so it is worth pinning here rather than only in the UI.
+    var pixels: [(UInt8, UInt8, UInt8)] = []
+    for i in 0..<64 {
+        pixels.append((UInt8(70 + i), UInt8(60 + i / 2), UInt8(190 - i))) 
+    }
+    let processor = AerochromeProcessor()
+    check(processor.prepare(cgImage: makeImage(pixels)), "one prepare for the whole sheet")
+
+    let store = AerochromePresetStore(directory: URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("irgconverter-check-tiles"))
+    var rendered: [String: [(Float, Float, Float)]] = [:]
+    for preset in store.builtIn {
+        guard let out = processor.process(params: preset.params) else {
+            check(false, "\(preset.name) tile rendered")
+            continue
+        }
+        rendered[preset.name] = readPixels(out)
+    }
+    check(rendered.count == store.builtIn.count,
+          "every preset produced a tile from the shared buffer (\(rendered.count))")
+
+    // Distinct tiles: a sheet of identical thumbnails would be worse than none.
+    let distinct = Set(rendered.values.map { px in
+        px.prefix(8).map { "\(Int($0.0)),\(Int($0.1)),\(Int($0.2))" }.joined(separator: ";")
+    })
+    check(distinct.count == rendered.count,
+          "no two tiles come out identical (\(distinct.count) of \(rendered.count))")
+
+    // And the shared processor is not left holding a preset's state: rendering the
+    // default last must match rendering it first.
+    let first = rendered[AerochromePresetStore.default.name]!
+    let again = readPixels(processor.process(params: AerochromePresetStore.default.params)!)
+    check(zip(first, again).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 && $0.2 == $1.2 },
+          "re-rendering a preset on the reused processor gives the same tile")
 }
 
 print("every preset resolves to values its sliders can show")
@@ -884,69 +899,17 @@ do {
         check((0.1...10).contains(p.gammaBy) && (0.25...4).contains(p.overallGamma),
               "\(preset.name): gammas within range "
               + "(\(String(format: "%.2f", p.gammaBy)), \(String(format: "%.2f", p.overallGamma)))")
-        if preset.usesLook {
-            check(preset.look.applied(to: p) == p,
-                  "\(preset.name): re-applying its look is a no-op")
-        } else {
-            // A literal preset is the one thing the dials do not describe, so it
-            // must come back exactly as written rather than being folded into them.
-            check(p == preset.params, "\(preset.name): literal values pass through untouched")
-        }
+        check((0.1...10).contains(p.gammaRx) && (0.1...10).contains(p.gammaGx),
+              "\(preset.name): group curves within range")
+        check(p == preset.params, "\(preset.name): values pass through untouched")
     }
     // The magenta lean lives in the gap between the two subtractions: less taken
-    // out of the green group leaves more infrared in the blue output.
+    // out of the green group leaves more infrared in the blue output, which is what
+    // makes the default pink rather than red.
     let p = AerochromePresetStore.default.resolved
     check(p.subtractIRGreen < p.subtractIRRed,
           "the default leaves more infrared in green than in red "
           + "(\(String(format: "%.2f", p.subtractIRGreen)) < \(String(format: "%.2f", p.subtractIRRed)))")
-}
-
-print("black and white modes")
-do {
-    let processor = AerochromeProcessor()
-    var pixels: [(UInt8, UInt8, UInt8)] = []
-    for i in 0..<96 {
-        pixels.append((UInt8(120 + i), UInt8(50 + i), UInt8(30 + i))) 
-    }
-    _ = processor.prepare(cgImage: makeImage(pixels))
-
-    let colour = readPixels(processor.process(params: AerochromeParams())!)
-    check(colour.contains { $0.0 != $0.1 || $0.1 != $0.2 }, "colour mode is not grey")
-
-    for mode in MonochromeSource.allCases where mode != .off {
-        var p = AerochromeParams()
-        p.monochrome = mode
-        guard let out = processor.process(params: p) else {
-            check(false, "\(mode.rawValue) rendered")
-            continue
-        }
-        let px = readPixels(out)
-        check(px.allSatisfy { $0.0 == $0.1 && $0.1 == $0.2 }, "\(mode.rawValue) is grey")
-    }
-
-    // Infrared monochrome must equal the channel infrared normally drives, and
-    // must ignore the subtractions entirely.
-    var mono = AerochromeParams()
-    mono.monochrome = .infrared
-    let monoPx = readPixels(processor.process(params: mono)!)
-    check(zip(monoPx, colour).allSatisfy { abs($0.0 - $1.0) <= 1 },
-          "infrared monochrome matches the red output of the colour render")
-    var monoHeavy = mono
-    monoHeavy.subtractIRRed = 2
-    monoHeavy.subtractIRGreen = 2
-    check(zip(readPixels(processor.process(params: monoHeavy)!), monoPx)
-              .allSatisfy { $0.0 == $1.0 },
-          "infrared monochrome ignores the subtractions")
-
-    // Luminance monochrome must depend on the map and the subtractions.
-    var luma = AerochromeParams()
-    luma.monochrome = .luminance
-    let lumaPx = readPixels(processor.process(params: luma)!)
-    var lumaRemapped = luma
-    lumaRemapped.outputMapG = 2
-    check(!zip(readPixels(processor.process(params: lumaRemapped)!), lumaPx)
-              .allSatisfy { $0.0 == $1.0 },
-          "luminance monochrome responds to the output map")
 }
 
 print("viewing aids are diagnostic only")
@@ -1032,7 +995,6 @@ do {
         p.outputMapR = seed > 0.5 ? 0 : 2
         p.outputMapG = seed > 0.5 ? 1 : 0
         p.outputMapB = seed > 0.5 ? 2 : 1
-        p.monochrome = seed > 0.5 ? .infrared : .off
         p.adjustments.exposure = seed
         p.adjustments.contrast = -seed
         p.adjustments.saturation = seed * 0.5
@@ -1042,18 +1004,13 @@ do {
             CurvePoint(x: 1, y: 1),
         ])
 
-        var look = LookSettings()
-        look.strength = 0.2 + seed * 0.5
-        look.magenta = seed - 0.5
-        look.density = 0.5 - seed
-
         var raw = RawDevelopSettings()
         raw.useNeutralBalance = seed > 0.5
         raw.temperature = 4000 + seed * 2000
         raw.tint = seed * 20
         raw.exposure = -1 - seed * 0.5
 
-        return PhotoEdit(params: p, look: look, raw: raw)
+        return PhotoEdit(params: p, raw: raw)
     }
 
     let source = distinct(0.8)
@@ -1063,57 +1020,42 @@ do {
     check(PasteOptions.all.apply(source, to: destination) == source,
           "pasting everything makes the destination identical to the source")
 
-    // The four groups partition the edit: pasting them one at a time in any
-    // order has to land on the same result as pasting the lot. This is what
-    // makes the checkbox list safe — no value belongs to two groups, and none to
-    // none of them.
+    // The three groups partition the edit: pasting them one at a time in any order
+    // has to land on the same result as pasting the lot. This is what makes the
+    // checkbox list safe — no value belongs to two groups, and none to none of them.
     var stepwise = destination
-    for options in [PasteOptions(look: true, channels: false, adjustments: false, rawDevelopment: false),
-                    PasteOptions(look: false, channels: true, adjustments: false, rawDevelopment: false),
-                    PasteOptions(look: false, channels: false, adjustments: true, rawDevelopment: false),
-                    PasteOptions(look: false, channels: false, adjustments: false, rawDevelopment: true)] {
+    for options in [PasteOptions(transform: true, adjustments: false, rawDevelopment: false),
+                    PasteOptions(transform: false, adjustments: true, rawDevelopment: false),
+                    PasteOptions(transform: false, adjustments: false, rawDevelopment: true)] {
         stepwise = options.apply(source, to: stepwise)
     }
-    check(stepwise == source, "the four groups cover every value between them")
+    check(stepwise == source, "the three groups cover every value between them")
 
     // Each group in isolation: what it claims, and nothing else.
-    let lookOnly = PasteOptions(look: true, channels: false, adjustments: false,
-                                rawDevelopment: false).apply(source, to: destination)
-    check(lookOnly.look == source.look
-          && lookOnly.params.gammaBy == source.params.gammaBy
-          && lookOnly.params.subtractIRRed == source.params.subtractIRRed
-          && lookOnly.params.subtractIRGreen == source.params.subtractIRGreen
-          && lookOnly.params.overallGamma == source.params.overallGamma,
-          "the Look group carries the dials and the four values they drive")
-    check(lookOnly.params.gammaRx == destination.params.gammaRx
-          && lookOnly.params.gammaGx == destination.params.gammaGx
-          && lookOnly.params.sourceIR == destination.params.sourceIR
-          && lookOnly.params.adjustments == destination.params.adjustments
-          && lookOnly.raw == destination.raw,
-          "the Look group leaves the group curves, tone and development alone")
+    let transformOnly = PasteOptions(transform: true, adjustments: false,
+                                     rawDevelopment: false).apply(source, to: destination)
+    check(transformOnly.params.gammaBy == source.params.gammaBy
+          && transformOnly.params.subtractIRRed == source.params.subtractIRRed
+          && transformOnly.params.subtractIRGreen == source.params.subtractIRGreen
+          && transformOnly.params.overallGamma == source.params.overallGamma
+          && transformOnly.params.gammaRx == source.params.gammaRx
+          && transformOnly.params.gammaGx == source.params.gammaGx
+          && transformOnly.params.sourceIR == source.params.sourceIR
+          && transformOnly.params.outputMapB == source.params.outputMapB,
+          "the transform group carries every Aerochrome-tab control")
+    check(transformOnly.params.adjustments == destination.params.adjustments
+          && transformOnly.raw == destination.raw,
+          "the transform group leaves tone and development alone")
 
-    // A hand-edited value has to travel verbatim rather than being re-derived
-    // from the dials, or a paste reproduces something the source never showed.
+    // Values travel verbatim. Nothing is re-derived on the way in, so a paste
+    // reproduces exactly what the source photo showed.
     var detached = source
     detached.params.gammaBy = 9.5
-    let pastedDetached = PasteOptions(look: true, channels: false, adjustments: false,
+    let pastedDetached = PasteOptions(transform: true, adjustments: false,
                                       rawDevelopment: false).apply(detached, to: destination)
-    check(pastedDetached.params.gammaBy == 9.5,
-          "a hand-detached IR gamma pastes as itself, not as the dial's value")
+    check(pastedDetached.params.gammaBy == 9.5, "an unusual IR gamma pastes as itself")
 
-    let channelsOnly = PasteOptions(look: false, channels: true, adjustments: false,
-                                    rawDevelopment: false).apply(source, to: destination)
-    check(channelsOnly.params.gammaRx == source.params.gammaRx
-          && channelsOnly.params.gammaGx == source.params.gammaGx
-          && channelsOnly.params.outputMapB == source.params.outputMapB
-          && channelsOnly.params.monochrome == source.params.monochrome,
-          "the channels group carries the source map, group curves and B&W mode")
-    check(channelsOnly.params.gammaBy == destination.params.gammaBy
-          && channelsOnly.look == destination.look
-          && channelsOnly.params.adjustments == destination.params.adjustments,
-          "the channels group leaves the Look and the tone alone")
-
-    let toneOnly = PasteOptions(look: false, channels: false, adjustments: true,
+    let toneOnly = PasteOptions(transform: false, adjustments: true,
                                 rawDevelopment: false).apply(source, to: destination)
     check(toneOnly.params.adjustments == source.params.adjustments
           && toneOnly.params.gammaBy == destination.params.gammaBy
@@ -1124,26 +1066,18 @@ do {
     // that group and the numbers stay at the destination's own.
     let noRaw = PasteOptions.all.apply(source, to: destination, includeRaw: false)
     check(noRaw.raw == destination.raw, "includeRaw: false leaves development untouched")
-    check(noRaw.params == source.params && noRaw.look == source.look,
-          "includeRaw: false still pastes everything else")
+    check(noRaw.params == source.params, "includeRaw: false still pastes everything else")
 
-    check(PasteOptions(look: false, channels: false, adjustments: false,
-                       rawDevelopment: false).isEmpty,
-          "all four off reads as empty")
+    check(PasteOptions(transform: false, adjustments: false, rawDevelopment: false).isEmpty,
+          "all three off reads as empty")
     check(!PasteOptions.all.isEmpty && PasteOptions.all.summary == "everything",
           "the default pastes everything")
-    check(PasteOptions(look: true, channels: false, adjustments: true,
-                       rawDevelopment: false).summary == "Look, tone",
+    check(PasteOptions(transform: true, adjustments: true,
+                       rawDevelopment: false).summary == "transform, tone",
           "the summary names the groups it will write")
-    check(PasteOptions(look: false, channels: false, adjustments: false,
+    check(PasteOptions(transform: false, adjustments: false,
                        rawDevelopment: false).apply(source, to: destination) == destination,
           "an empty paste changes nothing")
-
-    // A new photo starts at the shipped defaults, and the filmstrip badges
-    // "edited" by comparing against exactly that — so the defaults have to be
-    // what the Look dials produce at their own defaults.
-    check(PhotoEdit().params == LookSettings().applied(to: AerochromeParams()),
-          "the default edit is the Look defaults, so a fresh photo reads as unedited")
 
     let encoded = try JSONEncoder().encode(source)
     let decoded = try JSONDecoder().decode(PhotoEdit.self, from: encoded)

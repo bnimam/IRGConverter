@@ -179,9 +179,10 @@ public struct Sharpening: Equatable, Codable, Sendable {
 
 /// Ordinary photo edits, applied after the Aerochrome transform.
 ///
-/// Deliberately separate from `AerochromeParams`' transform fields: the
-/// auto-tune rewrites those from the image and leaves these alone, so a look you
-/// dialled in survives pressing Auto or dragging Look Strength.
+/// Deliberately separate from `AerochromeParams`' transform fields: these are a
+/// different stage of the pipeline, they get their own tab, and copy/paste treats
+/// them as their own group — so tone work can be spread across a batch without
+/// carrying the transform along with it.
 public struct AerochromeAdjustments: Equatable, Codable, Sendable {
     /// Stops. Applied first, as a straight multiply.
     public var exposure: Float = 0

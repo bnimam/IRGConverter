@@ -16,13 +16,13 @@ Built with SwiftUI and Accelerate, it processes images entirely on-device with n
 - [Features](#features)
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
-  - [Pre-built App](#pre-built-app)
-  - [Build from Source](#build-from-source)
+  - [Option 1: Download the pre-built app](#option-1-download-the-pre-built-app)
+  - [Option 2: Build from source](#option-2-build-from-source)
 - [Usage](#usage)
   - [Interface](#interface)
   - [Batch editing](#batch-editing)
   - [Presets](#presets)
-  - [Look](#look)
+  - [Setting the transform](#setting-the-transform)
   - [Controls](#controls)
   - [Viewing aids](#viewing-aids)
   - [Adjust tab](#adjust-tab)
@@ -79,12 +79,10 @@ for now just Aerochrome.
 
 - **One transform, transcribed from Photoshop** — A published Photoshop layer workflow, exactly: subtract infrared from the red and green groups, curves per group, then infrared→red, red→green, green→blue. Written out in full under [Algorithm](#algorithm).
 - **Batch editing** — Load a whole shoot, click between photos in the filmstrip, copy one photo's settings onto the rest, and export the lot into a folder. Each photo keeps its own edit. See [Batch editing](#batch-editing).
-- **Presets** — One shipped default look plus your own, saved as readable JSON. Export and import to share. See [Presets](#presets).
+- **Presets** — Six shipped looks plus your own, saved as readable JSON. All literal sets of numbers: applying one puts exactly those values on the sliders, so what a preset does is what you can read off the panel. Export and import to share, and a **Preview Presets** sheet that renders all of them as tiles of the photo you are working on. See [Presets](#presets).
 - **Per-control guidance** — An ⓘ button on every group explains which way to move each slider and how to tell it is wrong.
 - **Sharpening** — A luminance unsharp mask with amount, radius and threshold, applied after the curves. Radius is in the exported file's pixels, and a downsampled preview says so rather than faking it. See [Sharpening](#sharpening).
-- **Black and white** — From the infrared signal alone, from either visible band, or from the composite's luminance.
 - **Adjustable preview resolution** — 600 px to full, so dragging stays responsive on big files.
-- **Look dials** — Strength, Magenta and Density over the six group controls. A pure function of the calibration, so the same settings give the same numbers on every frame. See [Look](#look).
 - **Lightroom Classic plugin** — Send a selection from Lightroom straight into the app's filmstrip. See [Lightroom plugin](#lightroom-plugin).
 - **Command line** — `irgconvert`, for scripted conversions. See [Command line](#command-line).
 - **Real-time preview** — Adjust any parameter and see the result instantly on a downsampled preview. Renders are coalesced, so dragging a slider never queues up work that is already stale.
@@ -107,39 +105,71 @@ for now just Aerochrome.
 
 ### Prerequisites
 
-- macOS 14.0 (Sonoma) or later
-- A Swift 5.9+ toolchain. Xcode is not required — Command Line Tools
-  (`xcode-select --install`) is enough for `swift build`, `build_app.sh`, and
+- macOS 14.0 (Sonoma) or later. That is all the downloaded app needs.
+- To build it yourself, a Swift 5.9+ toolchain. Xcode is not required — Command Line
+  Tools (`xcode-select --install`) is enough for `swift build`, `build_app.sh` and
   `swift run IRGConverterCheck`.
 
-### Pre-built App
+Get the app one of two ways — download it, or build it — then **move it into
+`/Applications`**. Either route ends in the same place, and the app is expected to
+live there: it is the first location the [Lightroom plugin](#lightroom-plugin) looks
+in, and Finder's *Open With* only offers applications it can find.
 
-Download `IRGConverter-1.0.0.zip` from the [releases
-page](https://github.com/bnimam/IRGConverter/releases) and unzip it. Inside are the
-app, the Lightroom plugin with its installer, this README, the changelog and the
-licence. Move `IRGConverter.app` wherever you keep applications — `/Applications` is
-where the Lightroom plugin looks first.
+### Option 1: Download the pre-built app
 
-```bash
-open IRGConverter.app
-```
+1. Open the [releases page](https://github.com/bnimam/IRGConverter/releases) and
+   download `IRGConverter-1.0.0.zip`.
+2. Unzip it — double-click in Finder, or:
 
-If the app is rejected by Gatekeeper, you may need to run:
+   ```bash
+   cd ~/Downloads
+   unzip IRGConverter-1.0.0.zip
+   ```
 
-```bash
-xattr -dr com.apple.quarantine IRGConverter.app
-```
+   Inside are the app, the Lightroom plugin with its installer, this README, the
+   changelog and the licence.
+3. Move the app into `/Applications` — drag it there in Finder, or:
 
-### Build from Source
+   ```bash
+   mv ~/Downloads/IRGConverter-1.0.0/IRGConverter.app /Applications/
+   ```
+4. The app is **ad-hoc signed, not notarized**, so Gatekeeper will refuse to open
+   something downloaded from the internet. Clear the quarantine flag once:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/IRGConverter.app
+   ```
+5. Open it:
+
+   ```bash
+   open /Applications/IRGConverter.app
+   ```
+
+### Option 2: Build from source
 
 ```bash
 git clone https://github.com/bnimam/IRGConverter.git
 cd IRGConverter
 ./build_app.sh
-open IRGConverter.app
+mv IRGConverter.app /Applications/
+open /Applications/IRGConverter.app
 ```
 
-Or run directly via SwiftPM:
+`build_app.sh` builds the app and the `irgconvert` CLI, assembles the bundle next to
+the repository, and ad-hoc signs it. A locally built bundle is never quarantined, so
+step 4 above does not apply.
+
+**Updating an installed copy.** Building again replaces `IRGConverter.app` in the
+repository, not the copy in `/Applications`, and `mv` will not overwrite a bundle that
+is already there (`Directory not empty`). Quit the app first — macOS keeps the old
+executable mapped until you do, so a running app never shows the rebuild — then:
+
+```bash
+rm -rf /Applications/IRGConverter.app
+mv IRGConverter.app /Applications/
+```
+
+To run without installing anything, straight from SwiftPM:
 
 ```bash
 swift run
@@ -149,6 +179,9 @@ swift run
 same archive the releases page carries. The version comes from one place,
 `Sources/IRGConverterCore/Version.swift` — the build script reads it for the
 bundle's `Info.plist` and the archive name, and `irgconvert --version` prints it.
+The archive is built so that both `unzip` and Finder produce a bundle whose signature
+still validates; see the comment in `build_app.sh` for the flags that requires and
+why.
 
 ---
 
@@ -158,8 +191,8 @@ bundle's `Info.plist` and the archive name, and `irgconvert --version` prints it
 
 Launch the app and either click **Open Images…** or drag files onto the preview area. Select as many as you like — they all land in the filmstrip along the bottom. Camera RAW is developed neutrally (see [Features](#features)); anything else Core Graphics can decode (JPEG, PNG, TIFF, HEIC, BMP, …) is used as-is.
 
-Then pick a preset, or move the three **Look** dials. Everything below those is for
-taste adjustments afterwards.
+Then pick a preset and adjust the six transform controls from there. Everything on
+the Adjust tab is for taste afterwards.
 
 > **Where infrared lives.** Straight out of a yellow-filtered full-spectrum
 > camera, infrared lands in the **blue** channel — the yellow filter blocks
@@ -194,18 +227,16 @@ pastes to all photos instead. That menu also decides what a paste carries:
 
 | Group | What it writes |
 |---|---|
-| **Look** | The three Look dials, plus IR gamma, both IR subtractions and output gamma |
-| **Channels & group curves** | Source channel assignment, the red and green group curves, the output channel map, the black-and-white mode |
-| **Tone, colour & curves** | Everything on the Adjust tab |
+| **Aerochrome transform** | Everything on the Aerochrome tab: source channel roles, all four gammas, both subtractions, the output channel map, the black-and-white mode |
+| **Tone, colour, curves & sharpening** | Everything on the Adjust tab |
 | **RAW development** | Balance, temperature, tint and headroom — skipped for a destination that is not a RAW file |
 
 Turning a group off leaves that part of the destination photo alone, which is how
-you spread a look across frames that each needed their own exposure. The four
+you spread a look across frames that each needed their own exposure. The three
 groups partition the settings exactly: nothing belongs to two of them, and nothing
 to none, so pasting everything and pasting each group in turn give the same result.
-A check asserts that, and asserts one thing that is easy to get wrong — a value you
-moved by hand pastes as the number you can see, not as the number the Look dials
-would have produced for it.
+A check asserts that. Values travel verbatim — nothing is re-derived on the way in,
+so a paste reproduces exactly what the source photo showed.
 
 *Apply to Selected* on the Aerochrome tab is the same thing in one click: copy the
 current photo, paste to the selection.
@@ -248,21 +279,46 @@ enough to freeze the window on a real import:
 One preset ships, and it is also the default — every photo added to the filmstrip
 starts on it, and `irgconvert` uses it when no `--preset` is given:
 
-| Preset | What it does |
-|--------|--------------|
-| **Aerochrome Magenta** | Leaves lean magenta-pink rather than pure red. Hand-tuned on a full-spectrum ORF: IR gamma 1.13, subtractions 0.50 / 0.25, output gamma 2.63, plus an S-curve on the master. |
+**Aerochrome Magenta** is the default — every photo starts on it, and `irgconvert`
+uses it when no `--preset` is given. It was hand-tuned on a full-spectrum ORF: IR
+gamma 1.13, subtractions 0.50 / 0.25, group curves 0.46 / 1.21, output gamma 2.63,
+plus an S-curve on the master.
 
-A preset carries the three [Look](#look) dials plus everything the look does not
-own — source channels, output map, black and white, photo edits. Normally it
-computes the transform numbers from the dials, so each slider shows the value in
-use and re-applying the look is a no-op. There is a check for that.
+Every other built-in is that one with two or three numbers moved, so the set is a
+family rather than a collection of unrelated starting points — and each one's notes
+say exactly what it changes:
 
-The default is **literal** instead: its numbers were dialled in by hand and no
-combination of dials produces them — strength 0.5 would put IR gamma at the
-calibrated 2.15, not 1.13, and back-solving strength from 1.13 then gives a red
-subtraction of 0.16 against the 0.50 wanted. So it is marked as literal and passes
-through untouched, and there is a check for *that*. Moving a Look dial still works
-from there; it takes over the four controls it drives, exactly as the panel says.
+| Preset | What it changes | Measured on the sample frame |
+|--------|-----------------|------------------------------|
+| **Aerochrome Magenta** | *(the default)* | foliage 170,91,135 — pink |
+| **Aerochrome Red** | green subtraction 0.25 → 0.55, which is what was keeping the blue output up | foliage 170,91,**94** — red, not pink |
+| **Aerochrome Bold** | IR gamma → 1.55, red subtraction → 0.58 | mean chroma 72 → 115; foliage 184,47,86 |
+| **Aerochrome Subtle** | IR gamma → 1.02, subtractions → 0.38 / 0.18 | mean chroma 72 → 54 |
+| **Aerochrome Deep** | output gamma → 2.05 and a steeper curve | mean luma 102 → 65 |
+| **Pre-swapped IRG** | source roles: infrared ← red, vis red ← green, vis green ← blue | for files already in IRG order |
+
+One is worth a note: **Pre-swapped IRG** applied to a file that is *not* pre-swapped
+produces nonsense by design, since it reads infrared out of the visible-red channel.
+
+A preset is a literal set of numbers plus, optionally, how to develop a RAW file.
+There is no derivation between the file and the sliders, so applying one and reading
+the panel tells you the whole story. `IRGConverterCheck` renders every built-in on a
+foliage-and-sky fixture and asserts the direction of each claim above, so a preset
+cannot quietly stop doing what its notes say.
+
+**Preview Presets…** opens every preset as a tile of the photo you are working on,
+rendered from the preview already in memory: one downsample, then one transform per
+preset over the same prepared buffers, since the decode is the expensive part and it
+has already happened. Tiles appear as they land, and clicking one applies it. This
+matters more here than in most editors — what a preset does depends on the frame,
+because how much infrared a given subtraction leaves behind is a property of the
+vegetation in front of the camera, not of the numbers alone.
+
+The preset menu keeps naming the preset a photo was started from, even after a slider
+has moved. It is a record of where the settings came from, not a claim that they are
+untouched — the common case is *apply a preset, then adjust one control for this
+frame*, and a label that blanked itself the moment anything differed left nothing on
+screen saying which preset you were working from.
 
 **Manage** offers:
 
@@ -283,41 +339,51 @@ collection, a bare array, or a single bare preset:
   "formatVersion": 1,
   "presets": [
     {
-      "name": "My Look",
-      "deriveFromImage": false,
-      "options": { "lookStrength": 0.5 },
-      "params": { "mode": "extract", "gammaRx": 0.4, "subtractIRRed": 0.75 }
+      "name": "My Preset",
+      "notes": "what this one is for",
+      "params": { "gammaBy": 1.13, "gammaRx": 0.46, "subtractIRRed": 0.75 },
+      "raw": { "useNeutralBalance": true, "exposure": -1 }
     }
   ]
 }
 ```
 
-### Look
+### Setting the transform
 
-Three dials over the six group controls below them:
+The six transform controls are set directly — there is no layer of abstraction over
+them. What the panel shows is what the transform uses, and a preset is just a set of
+these numbers:
 
-| Dial | Range | What it moves |
+| Control | Range | What it does |
 |---|---|---|
-| **Strength** | 0 … 1 | The infrared curve and both subtractions together — brightness and purity at once, which is what "more Aerochrome" means. |
-| **Magenta** | −1 … +1 | Whether foliage reads pure red or magenta-pink, by leaving more or less infrared in the green group. |
-| **Density** | −1 … +1 | Overall weight. Positive is denser and richer. |
+| **Infrared Group → IR gamma** | 0.1 … 10 | The curve on the infrared group. The strongest single control: it decides how bright infrared is and therefore how red foliage goes. |
+| **Red Group → gamma** | 0.1 … 10 | The curve *above* the red group's Subtract layer, so it shapes what survived the subtraction. |
+| **Red Group → subtract** | 0 … 2 | How much infrared comes out of the red group. Raise until soloed foliage is nearly black, then back off. |
+| **Green Group → gamma** | 0.1 … 10 | The curve *below* the green group's Subtract layer, so it runs first and feeds the subtraction. |
+| **Green Group → subtract** | 0 … 2 | How magenta foliage is. Higher takes leaves toward pure red; lower keeps them pink. |
+| **Output → Gamma** | 0.25 … 4 | The final curve over the composite. Lower is denser. |
 
-`0.5 / 0 / 0` reproduces the calibrated look exactly. The strength range is
-deliberately wide — 0 is barely converted and 1 is past tasteful, so the useful
-settings sit inside rather than at the top. Measured end to end it spans **10× in
-infrared gamma** and **12× in subtraction**:
+Each group heading has an **ⓘ** button giving the order to set them in and the
+symptom of each one being wrong, and a **Solo** checkbox that shows that signal on
+its own — which is the only reliable way to judge a subtraction. See
+[Viewing aids](#viewing-aids).
 
-| Strength | IR gamma | Red subtract | Foliage | Sky |
-|---|---|---|---|---|
-| 0.00 | 0.67 | 0.05 | 87,127,131 | 74,241,188 |
-| 0.35 | 1.44 | 0.18 | 158,105,124 | 147,220,183 |
-| 0.50 | 2.15 | 0.30 | 182,87,118 | 173,202,179 |
-| 0.65 | 3.20 | 0.43 | 201,67,111 | 194,180,174 |
-| 1.00 | 6.88 | 0.56 | 229,17,89 | 225,123,160 |
+Gamma sliders use a logarithmic track, so 1.0 sits in the middle instead of being
+crammed against the left edge.
 
-These are a **pure function of the dials and the calibration** — nothing is measured
-from the image. That is what makes a preset mean something: the same settings give
-the same numbers on every frame.
+#### Why there are no Look dials
+
+Earlier versions had three dials — Strength, Magenta, Density — computing the
+infrared curve, both subtractions and the output gamma from the calibration. They
+have been removed. The problem was ownership: a hand-tuned control silently detached
+from its dial, and then any later touch of a dial took it back, so the panel could
+not tell you which numbers were yours. Presets had the same split personality, one
+storing dials and another storing values. Six sliders and a set of presets say the
+same things with none of that.
+
+The measurements the dials were fitted against are still the shipped defaults, and
+they are still recorded in `AerochromeCalibration` — IR gamma 2.15, subtractions 0.30
+and 0.10, output gamma 1.85, on the reference frame.
 
 #### Why the measurement-based auto-tune was removed
 
@@ -336,9 +402,9 @@ because it did not work well enough to trust:
   the visible groups and turned the sky **orange**; fitting all six against
   percentile-derived populations over-subtracted.
 
-The root cause is worth recording, because it also explains why the two group curves
-are not on a dial: `Red Group → subtract` and `Red Group → gamma` do the same job
-between them. The subtraction removes most of the infrared and the curve above it,
+The root cause is worth recording, because it also explains why the red group needs
+both of its controls set together: `Red Group → subtract` and `Red Group → gamma` do
+the same job between them. The subtraction removes most of the infrared and the curve above it,
 being below 1, squashes what is left. Full analytic cancellation wants a subtraction
 near `0.85`; the calibrated value is `0.30`, because the curve finishes the work.
 Solving either in isolation lands nowhere near the pair that looks right.
@@ -350,14 +416,12 @@ Once an image is loaded, the control panel on the right provides the following a
 | Group | Controls | Description |
 |-------|----------|-------------|
 | *(tab)* | Aerochrome / Adjust | Transform controls, or ordinary photo editing. See [Adjust tab](#adjust-tab). |
-| **Presets** | Choose…, Manage | The default look and your own. See [Presets](#presets). |
-| **Look** | Strength, Magenta, Density | Drives the six controls below. See [Look](#look). |
+| **Presets** | Choose…, Preview Presets…, Manage | The six built-in looks and your own. See [Presets](#presets). |
 | **Source Channels** | IR ←, Vis red ←, Vis green ← | Which file channel holds each signal. Defaults to IR = blue. |
 | **Infrared Group** | IR gamma | Curves on the blue group. The strongest single control — it sets how red the foliage goes. |
 | **Red Group** | gamma, subtract | The curve *above* the Subtract layer, and that layer's opacity. |
 | **Green Group** | gamma, subtract | The curve *below* the Subtract layer, and that layer's opacity. |
 | **Output** | Gamma, R ←, G ←, B ← | The final curves layer, and which signal drives each output channel. |
-| **Black & White** | Off / Infrared / Visible red / Visible green / Composite luminance | Render grey instead of false colour. Unlike Solo, this is part of the image and is exported. |
 | **Solo** *(checkbox on each group)* | Infrared, Red, Green | Show that one signal on its own as grey. See [Viewing aids](#viewing-aids). |
 | **Show clipping** | — | Mark pixels crushed to 0 (blue) or pushed to 255 (red). |
 
@@ -370,8 +434,7 @@ Gamma sliders use a logarithmic track, so 1.0 (neutral) sits at the middle
 rather than being crammed against the left edge.
 
 **Double-clicking any control** resets just that control to whatever was last
-applied as a whole — the active preset, the last Look change, or the shipped
-defaults. The panel says which, and each control's tooltip shows the value it
+applied as a whole — the active preset, a paste, or the shipped default. The panel says which, and each control's tooltip shows the value it
 will snap back to. Resetting the one control you had nudged brings the preset
 label back, since the settings match the preset again.
 
@@ -382,7 +445,8 @@ between the processed preview and the untouched source.
 ### Adjust tab
 
 Everything on this tab sits *after* the Aerochrome transform, and is left alone
-by the [Look](#look) dials — an edit made here survives moving them.
+by the six transform controls — an edit made here survives moving them. A preset
+does replace it, since a preset carries its own curve.
 
 #### Preview
 
@@ -426,8 +490,8 @@ Two separate problems needing two separate levers:
 - **Level.** Clipping is a level problem, so exposure fixes it. One stop of
   headroom drops clipped red pixels from 9.6% to 0.8% and, because of that,
   *raises* agreement between the two recovered visible channels from 0.880 to
-  0.944. Nothing is given up: the Look dials place the tones relative to the
-  calibration, so a darker input simply needs a touch more Strength.
+  0.944. Nothing is given up: a darker input simply needs a little more infrared
+  gamma, and the shipped presets are already fitted against these defaults.
 
 #### Tone and Colour
 
@@ -696,8 +760,8 @@ it from source with `swift run irgconvert`.
 
 ```bash
 irgconvert --input P7290001.ORF --output out.heic
-irgconvert --input P7290001.ORF --output mine.heic --preset "My Look"
-irgconvert --input P7290001.ORF --output bw.heic --mono infrared --strength 0.7
+irgconvert --input P7290001.ORF --output bold.heic --preset "Aerochrome Bold"
+irgconvert --input P7290001.ORF --output punchy.heic --ir-gamma 1.5 --green-subtract 0.55
 irgconvert --list-presets
 ```
 
@@ -705,9 +769,8 @@ irgconvert --list-presets
 |---|---|
 | `--input` / `--output` | Source, and destination. Always written as HEIC. |
 | `--preset <name>` | Start from a named preset, the default or one of yours. Omitted, the [default preset](#presets) is used — the same starting point as the app. |
-| `--strength` / `--magenta` / `--density` | The three [Look](#look) dials. They override the preset's, and take over the four controls they drive even on a literal preset. |
+| `--ir-gamma` / `--red-gamma` / `--red-subtract` / `--green-gamma` / `--green-subtract` / `--output-gamma` | The six [transform controls](#setting-the-transform), each in the same units as its slider. Given here, they override the preset's. |
 | `--sharpen <0..2>` / `--sharpen-radius <px>` / `--sharpen-threshold <levels>` | [Unsharp mask](#sharpening). Amount 0 is off. Full resolution here, so the radius needs no scaling. |
-| `--mono <mode>` | `off`, `infrared`, `visibleRed`, `visibleGreen`, `luminance`. |
 | `--ir-channel <r\|g\|b>` | Which source channel holds infrared. Default `b`. |
 | `--headroom` / `--temperature` / `--tint` | RAW development. See [Adjust tab](#adjust-tab). Given here, they beat the preset's. |
 | `--version` / `--help` | Print the version, or the option list. |
@@ -752,16 +815,16 @@ Steps:
 1. **Decompose** — Split the source into three float planes and cache `1 - channel` for each. Which plane plays which role is a parameter, so changing the assignment costs nothing.
 2. **Transform** — The stack above, as five `vvpowf` passes and a handful of `vDSP` vector ops.
 3. **Channel remapping** — The default is `R ← infrared`, `G ← visible red`, `B ← visible green`: the Aerochrome false-colour shift. Infrared-bright foliage goes crimson, and visible-red surfaces such as brick or brown wood go green.
-4. **Black and white** — Optionally flatten to grey, either from one signal or from the composite's luminance.
-5. **Adjustments** — Exposure, endpoints, tonal lifts, contrast, colour tilts and saturation, in one fused pass over the three planes. Deliberately a scalar loop rather than fifteen `vDSP` passes: saturation and vibrance need all three channels of a pixel at once, the tonal masks are cheap polynomials, and one pass touches each pixel's memory once instead of fifteen times. Skipped entirely when nothing is set.
-6. **Curves** — Master and per-channel curves are composed into one 256-entry table per channel and applied by interpolated table lookup, so the cost is a single lookup per channel regardless of how many control points there are.
+4. **Adjustments** — Exposure, endpoints, tonal lifts, contrast, colour tilts and saturation, in one fused pass over the three planes. Deliberately a scalar loop rather than fifteen `vDSP` passes: saturation and vibrance need all three channels of a pixel at once, the tonal masks are cheap polynomials, and one pass touches each pixel's memory once instead of fifteen times. Skipped entirely when nothing is set.
+5. **Curves** — Master and per-channel curves are composed into one 256-entry table per channel and applied by interpolated table lookup, so the cost is a single lookup per channel regardless of how many control points there are.
+6. **Sharpening** — A luminance unsharp mask, last, so what it amplifies is the edge contrast of the finished picture. Two separable vImage convolution passes over one luminance plane rather than three per-channel blurs. See [Sharpening](#sharpening).
 
 ### Verifying the maths
 
 The vectorized pipeline is checked against a scalar transcription of the
 equations above — both transforms, several parameter sets, edge cases for pure
-black/white, odd image widths and row padding, plus the Look dials, the presets,
-the black-and-white modes, the viewing aids, the copy/paste groups, the batch
+black/white, odd image widths and row padding, plus every built-in preset,
+the viewing aids, the copy/paste groups, the batch
 export naming and both export formats — including a TIFF round trip that has to come
 back bit-identical. Sharpening gets its own section: overshoot on both a horizontal
 and a vertical edge (so both convolution passes are exercised), flat areas left
@@ -783,7 +846,6 @@ In no particular order
 - [x] Preset save / load / export / import system
       (`~/Library/Application Support/IRGConverter/Presets`)
 - [x] Basic photo editing sliders and a curves tool
-- [x] Black and white mode
 - [x] Adjustable preview resolution
 - [x] Clickable per-control guidance
 - [x] Batch processing (filmstrip, copy/paste of edits, folder export)
@@ -793,12 +855,11 @@ In no particular order
 - [ ] Waveform display
 - [ ] Undo history
 - [x] Infrared bleed preview to fine tune (solo + clipping viewing aids)
-- [x] Double click to reset a control to the preset, the last Look change, or the default
+- [x] Double click to reset a control to the preset, a paste, or the default
 - [x] Source channel role picker, for shooting straight off a yellow-filtered
       full-spectrum camera without pre-swapping to IRG order
-- [x] Look dials (replaced the measurement-based auto button, which did not work well)
+- [x] Direct transform controls with a family of presets over them (replaced the Look dials, which replaced the measurement-based auto button)
 - [ ] In app instructions for fine tuning for your camera + lens + filter combo
-- [x] Look Strength slider, with a range that actually spans the useful settings
 - [x] Lightroom Classic plugin (sends the selection to the app)
 - [x] Command-line converter
 - [ ] Verify the Lightroom plugin against an actual Lightroom install

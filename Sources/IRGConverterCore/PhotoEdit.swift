@@ -1,38 +1,35 @@
 import Foundation
 
-/// Everything that turns one file into one result: the transform parameters, the
-/// Look dials that drove them, and how the RAW was developed.
+/// Everything that turns one file into one result: the transform parameters and
+/// how the RAW was developed.
 ///
 /// This is what a batch copies between photos, and what each photo in the
-/// filmstrip owns its own copy of. The three parts are stored rather than
-/// re-derived because `params` can legitimately disagree with `look` — moving a
-/// group slider by hand detaches it, and a copy has to carry what the user can
-/// actually see, not what the dials would have produced.
+/// filmstrip owns its own copy of.
 public struct PhotoEdit: Equatable, Codable, Sendable {
     public var params: AerochromeParams
-    public var look: LookSettings
     public var raw: RawDevelopSettings
 
     public init(params: AerochromeParams = AerochromeParams(),
-                look: LookSettings = LookSettings(),
                 raw: RawDevelopSettings = RawDevelopSettings()) {
         self.params = params
-        self.look = look
         self.raw = raw
     }
 
+    /// Field-by-field with fallbacks, so an edit written by another build still
+    /// loads. Files from the versions that carried a `look` object simply drop it —
+    /// those builds stored `params` as the values actually on screen, so nothing is
+    /// lost by ignoring the dials that produced them.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         params = (try? c.decode(AerochromeParams.self, forKey: .params)) ?? AerochromeParams()
-        look = (try? c.decode(LookSettings.self, forKey: .look)) ?? LookSettings()
         raw = (try? c.decode(RawDevelopSettings.self, forKey: .raw)) ?? RawDevelopSettings()
     }
 
     public init(preset: AerochromePreset, raw fallback: RawDevelopSettings) {
-        self.init(params: preset.resolved, look: preset.look, raw: preset.raw ?? fallback)
+        self.init(params: preset.params, raw: preset.raw ?? fallback)
     }
 
-    /// What a photo starts as: the default preset, resolved.
+    /// What a photo starts as: the default preset.
     ///
     /// Not `PhotoEdit()` — that is the bare struct defaults, which is the
     /// calibration rather than the shipped look. Everything that asks "has this
@@ -43,31 +40,22 @@ public struct PhotoEdit: Equatable, Codable, Sendable {
 
 /// Which parts of a copied edit a paste writes.
 ///
-/// The four groups partition `PhotoEdit` exactly — every stored value belongs to
+/// The three groups partition `PhotoEdit` exactly — every stored value belongs to
 /// one of them and none to two — so "paste everything" and "paste each group in
 /// turn" produce the same result. That is what `IRGConverterCheck` asserts.
-///
-/// `look` deliberately owns the four transform values the dials drive
-/// (`gammaBy`, both subtractions, `overallGamma`) as well as the dials
-/// themselves, and copies them verbatim instead of re-deriving them. A photo
-/// whose IR gamma was nudged by hand would otherwise paste as something the
-/// source photo never looked like.
 public struct PasteOptions: Equatable, Codable, Sendable {
-    /// Look dials, plus IR gamma, both IR subtractions and output gamma.
-    public var look: Bool
-    /// Source channel assignment, the two visible group curves, the output
-    /// channel map and the black-and-white mode.
-    public var channels: Bool
-    /// Tone, colour and the curves from the Adjust tab.
+    /// The whole Aerochrome transform: source channel roles, all four gammas, both
+    /// subtractions and the output channel map.
+    public var transform: Bool
+    /// Tone, colour, curves and sharpening from the Adjust tab.
     public var adjustments: Bool
     /// Balance, temperature, tint and headroom. Only meaningful for a RAW file;
     /// the caller decides whether the destination is one.
     public var rawDevelopment: Bool
 
-    public init(look: Bool = true, channels: Bool = true,
-                adjustments: Bool = true, rawDevelopment: Bool = true) {
-        self.look = look
-        self.channels = channels
+    public init(transform: Bool = true, adjustments: Bool = true,
+                rawDevelopment: Bool = true) {
+        self.transform = transform
         self.adjustments = adjustments
         self.rawDevelopment = rawDevelopment
     }
@@ -75,16 +63,15 @@ public struct PasteOptions: Equatable, Codable, Sendable {
     public static let all = PasteOptions()
 
     public var isEmpty: Bool {
-        !look && !channels && !adjustments && !rawDevelopment
+        !transform && !adjustments && !rawDevelopment
     }
 
-    /// Human-readable summary for the menu, e.g. "Look, tone".
+    /// Human-readable summary for the menu, e.g. "transform, tone".
     public var summary: String {
-        if !isEmpty, look, channels, adjustments, rawDevelopment { return "everything" }
+        if transform, adjustments, rawDevelopment { return "everything" }
         if isEmpty { return "nothing" }
         var parts: [String] = []
-        if look { parts.append("Look") }
-        if channels { parts.append("channels") }
+        if transform { parts.append("transform") }
         if adjustments { parts.append("tone") }
         if rawDevelopment { parts.append("RAW") }
         return parts.joined(separator: ", ")
@@ -99,24 +86,19 @@ public struct PasteOptions: Equatable, Codable, Sendable {
                       includeRaw: Bool = true) -> PhotoEdit {
         var out = destination
 
-        if look {
-            out.look = source.look
-            out.params.gammaBy = source.params.gammaBy
-            out.params.subtractIRRed = source.params.subtractIRRed
-            out.params.subtractIRGreen = source.params.subtractIRGreen
-            out.params.overallGamma = source.params.overallGamma
-        }
-
-        if channels {
+        if transform {
             out.params.sourceIR = source.params.sourceIR
             out.params.sourceVisibleRed = source.params.sourceVisibleRed
             out.params.sourceVisibleGreen = source.params.sourceVisibleGreen
+            out.params.gammaBy = source.params.gammaBy
+            out.params.subtractIRRed = source.params.subtractIRRed
             out.params.gammaRx = source.params.gammaRx
             out.params.gammaGx = source.params.gammaGx
+            out.params.subtractIRGreen = source.params.subtractIRGreen
+            out.params.overallGamma = source.params.overallGamma
             out.params.outputMapR = source.params.outputMapR
             out.params.outputMapG = source.params.outputMapG
             out.params.outputMapB = source.params.outputMapB
-            out.params.monochrome = source.params.monochrome
         }
 
         if adjustments {

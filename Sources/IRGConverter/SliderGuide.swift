@@ -66,29 +66,6 @@ struct SliderGuide {
         ]
     )
 
-    static let monochrome = SliderGuide(
-        title: "Black & White",
-        layer: "Flattening the composite to grey.",
-        points: [
-            "**Infrared** is the classic black-and-white infrared look: bright foliage, dark sky, from the infrared group alone. The subtractions have no effect here.",
-            "**Composite luminance** weights the finished false-colour result, so the channel map, both subtractions and every curve still shape it. Foliage stays bright because it is driving the red output.",
-            "**Visible red** or **visible green** give an ordinary-looking black-and-white photograph, since those are the real visible bands with infrared removed.",
-            "Unlike Solo, this is part of the image and does get exported.",
-        ]
-    )
-
-    static let look = SliderGuide(
-        title: "Look",
-        layer: "Three dials over the six group controls below. Not part of the Photoshop workflow — a shortcut through it.",
-        points: [
-            "**Strength** moves the infrared curve and both subtractions together, which is what \"more Aerochrome\" actually means. The range is wide on purpose: 0 is barely converted, 1 is past tasteful, so the settings worth using are somewhere inside.",
-            "**Magenta** decides whether foliage reads pure red or magenta-pink, by leaving more or less infrared in the green group.",
-            "**Density** is overall weight. Positive is denser and richer, negative lighter.",
-            "These are a pure function of the calibration — the same settings give the same numbers on every image, which is what makes a preset mean anything.",
-            "Moving one of the six controls below by hand detaches it. A Look slider or a preset puts it back under control.",
-        ]
-    )
-
     static let previewResolution = SliderGuide(
         title: "Preview Resolution",
         layer: "How large an image the live preview is computed from.",

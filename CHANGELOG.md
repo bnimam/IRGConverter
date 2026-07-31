@@ -16,36 +16,45 @@ false-colour look, one at a time or a shoot at a time.
   get wrong.
 - Runs on normalized float planes through Accelerate (vDSP), and is checked against
   a scalar transcription of the equations.
-- **Look dials** — Strength, Magenta and Density drive the six group controls as a
-  pure function of the calibration, so the same settings give the same numbers on
-  every frame. Move a group control by hand and it detaches until a dial or a preset
-  sets it again.
+- **Six transform controls, set directly** — the infrared curve, both group curves,
+  both subtractions and the output gamma. No abstraction over them: what the panel
+  shows is what the transform uses, and a preset is a set of exactly these numbers.
+  Each group has an ⓘ button giving the order to set them in and the symptom of each
+  being wrong.
 - **Source channel roles** — which file channel carries infrared, visible red and
   visible green. Defaults to infrared in **blue**, where a yellow-filtered
   full-spectrum camera puts it.
-- **Black and white** from the infrared signal alone, either visible band, or the
-  composite's luminance.
 
 ### Editing
 
 - **Batch editing** — a filmstrip along the bottom, each photo owning its own edit.
-  Finder-style selection (plain click, ⌘-click, ⇧-click), copy/paste of settings
-  with four independent scope groups (Look, channels, tone, RAW development), and
-  *Apply to Selected* for the common case.
+  Finder-style selection (plain click, ⌘-click, ⇧-click), copy/paste of settings with
+  three independent scope groups (the Aerochrome transform, the Adjust tab, RAW
+  development), and *Apply to Selected* for the common case.
 - **Adjust tab** — exposure, contrast, highlights, shadows, whites, blacks,
   saturation, vibrance, warmth, tint; master and per-channel tone curves with
   monotone cubic interpolation; and **sharpening** (a luminance unsharp mask with
   amount, radius and threshold).
-- **Presets** — one shipped default look, *Aerochrome Magenta*, plus your own saved
-  as readable JSON in `~/Library/Application Support/IRGConverter/Presets`. Export
-  and import to share.
+- **Presets** — six built-in looks plus your own, saved as readable JSON in
+  `~/Library/Application Support/IRGConverter/Presets`. *Aerochrome Magenta* is the
+  default every photo starts on; the other five are that one with two or three numbers
+  moved (Red, Bold, Subtle, Deep, and one for files already in IRG order). Each says
+  what it changes, and a check renders all of them on a foliage-and-sky fixture to
+  assert the direction of every claim. Export and import to share.
+- **Preview Presets** — a sheet showing every preset as a tile of the photo you are
+  working on, rendered from the preview already in memory: one downsample, then one
+  transform per preset over the same prepared buffers. Click a tile to apply it. What
+  a preset does depends on the frame, so seeing them beats reading their names.
+- The preset menu keeps naming the preset a photo was started from even after a
+  slider moves — a record of where the settings came from, not a claim that they are
+  untouched.
 - **Viewing aids** — Solo any one signal as grey, and a clipping overlay. Both are
   diagnostic: never saved into a preset, never applied on export, and the preview
   says so while either is on.
 - **Histogram** with clipping readouts, plotted on a mild power curve because a
   false-colour render piles most of its pixels into a few narrow peaks.
-- Double-click any control to reset just that control to the active preset, the last
-  Look change, or the default. Every group has an ⓘ button explaining which way to
+- Double-click any control to reset just that control to the active preset, a paste,
+  or the default. Every group has an ⓘ button explaining which way to
   move its controls and how to tell they are wrong.
 
 ### RAW and output
@@ -76,7 +85,7 @@ false-colour look, one at a time or a shoot at a time.
   conversions.
 - Files can arrive by drag and drop, an open panel, Finder's *Open With*, a drop on
   the Dock icon, or as command-line paths.
-- `swift run IRGConverterCheck` runs 206 checks with no Xcode required — an
+- `swift run IRGConverterCheck` runs 231 checks with no Xcode required — an
   executable target rather than an XCTest one, so it works on a bare Command Line
   Tools install.
 

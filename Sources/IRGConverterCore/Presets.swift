@@ -2,21 +2,12 @@ import Foundation
 
 /// A named set of settings.
 ///
-/// A preset carries the three `LookSettings` dials plus everything the look does
-/// not own — source channels, output map, black and white, photo edits. Applying it
-/// computes the transform numbers from the dials, so a preset is reproducible and
-/// its sliders always show the values in use.
+/// A preset is a literal set of transform numbers plus, optionally, how to develop
+/// a RAW file. Applying it puts exactly those numbers on the sliders — there is no
+/// derivation in between, so what a preset does is what you can read off the panel.
 public struct AerochromePreset: Equatable, Codable, Identifiable, Sendable {
     public var name: String
     public var params: AerochromeParams
-    public var look: LookSettings
-    /// Whether the look dials drive the transform, or `params` is taken verbatim.
-    ///
-    /// Almost every preset is look-driven, which is what makes it reproducible.
-    /// The exception is a preset whose whole point is a specific set of numbers —
-    /// the document's own starting values, say, which no combination of dials
-    /// produces.
-    public var usesLook: Bool = true
 
     /// RAW development settings, applied only when the loaded file is RAW.
     /// Optional so presets written before this existed still load, and so a
@@ -29,104 +20,38 @@ public struct AerochromePreset: Equatable, Codable, Identifiable, Sendable {
     public var id: String { name }
 
     private enum CodingKeys: String, CodingKey {
-        case name, params, look, usesLook, raw, notes
-        // Read-only, for files written before the look dials replaced the
-        // measurement-based auto-tune.
-        case legacyOptions = "options"
-        case legacyGreenSubtractScale = "greenSubtractScale"
-        case legacyOutputGamma = "outputGamma"
+        case name, params, raw, notes
     }
 
     public init(name: String,
                 params: AerochromeParams = AerochromeParams(),
-                look: LookSettings = LookSettings(),
-                usesLook: Bool = true,
                 raw: RawDevelopSettings? = nil,
                 notes: String? = nil) {
         self.name = name
         self.params = params
-        self.look = look
-        self.usesLook = usesLook
         self.raw = raw
         self.notes = notes
     }
 
+    /// Field-by-field with fallbacks, so a preset saved by an older or newer build
+    /// still loads instead of failing outright.
+    ///
+    /// Files written by the versions that had Look dials carry a `look` object and a
+    /// `usesLook` flag. Both are ignored: those builds stored `params` as the values
+    /// actually on the sliders, so the numbers are already here and the dials that
+    /// produced them are no longer a thing the app has.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = (try? c.decode(String.self, forKey: .name)) ?? "Untitled"
         params = (try? c.decode(AerochromeParams.self, forKey: .params)) ?? AerochromeParams()
         raw = try? c.decode(RawDevelopSettings.self, forKey: .raw)
         notes = try? c.decode(String.self, forKey: .notes)
-        usesLook = (try? c.decode(Bool.self, forKey: .usesLook)) ?? true
-
-        if let current = try? c.decode(LookSettings.self, forKey: .look) {
-            look = current
-        } else {
-            // Files written against the measurement-based auto-tune stored an
-            // `options` object with a `lookStrength`, and sometimes carried the
-            // leans as their own fields. Map what maps; the rest was derived from
-            // the image and cannot be recovered, so `params` stands in for it.
-            var recovered = LookSettings()
-            if let legacy = try? c.decode(LegacyOptions.self, forKey: .legacyOptions) {
-                recovered.strength = legacy.lookStrength ?? recovered.strength
-                if let green = legacy.greenSubtractionScale ?? (try? c.decode(
-                    Float.self, forKey: .legacyGreenSubtractScale)) {
-                    recovered.magenta = Self.magentaLean(fromScale: green)
-                }
-                if let gammaScale = legacy.outputGammaScale {
-                    recovered.density = Self.densityLean(fromScale: gammaScale)
-                }
-            } else if let green = try? c.decode(Float.self, forKey: .legacyGreenSubtractScale) {
-                recovered.magenta = Self.magentaLean(fromScale: green)
-            }
-            if let gamma = try? c.decode(Float.self, forKey: .legacyOutputGamma) {
-                recovered.density = Self.densityLean(
-                    fromScale: gamma / Float(AerochromeCalibration.overallGamma))
-            }
-            look = recovered
-        }
     }
 
-    /// The shape of the `options` object older files carried.
-    private struct LegacyOptions: Decodable {
-        var lookStrength: Float?
-        var greenSubtractionScale: Float?
-        var outputGammaScale: Float?
-    }
-
-    /// The old leans were multipliers; the new ones are signed and exponential.
-    /// `scale = 4 ^ -magenta`, so invert it.
-    private static func magentaLean(fromScale scale: Float) -> Float {
-        guard scale > 0 else { return 1 }
-        return min(max(-log(scale) / log(4) * -1, -1), 1) * -1
-    }
-
-    /// `scale = 2.2 ^ -density`.
-    private static func densityLean(fromScale scale: Float) -> Float {
-        guard scale > 0 else { return 0 }
-        return min(max(-log(scale) / log(2.2), -1), 1)
-    }
-
-    /// Written without the legacy keys — they are read for compatibility but
-    /// never emitted, so a file saved today has one place per setting.
-    public func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(name, forKey: .name)
-        try c.encode(params, forKey: .params)
-        try c.encode(look, forKey: .look)
-        try c.encode(usesLook, forKey: .usesLook)
-        try c.encodeIfPresent(raw, forKey: .raw)
-        try c.encodeIfPresent(notes, forKey: .notes)
-    }
-
-    /// The parameters this preset produces: its own settings with the look dials
-    /// applied over the transform controls.
-    ///
-    /// A pure function, so applying a preset and then re-applying its look is a
-    /// no-op and every slider shows the value actually in use.
-    public var resolved: AerochromeParams {
-        usesLook ? look.applied(to: params) : params
-    }
+    /// The parameters this preset produces. Its own, unmodified — kept as a property
+    /// rather than removed so call sites read the same as they did when a preset
+    /// could still derive its numbers from something else.
+    public var resolved: AerochromeParams { params }
 }
 
 /// On-disk wrapper, so a file can hold one preset or a whole collection and
@@ -302,16 +227,11 @@ public final class AerochromePresetStore {
 
     // MARK: - Built-ins
 
-    /// The one preset the app ships with, and what a newly added photo starts on.
+    /// The look every photo starts on, hand-tuned on a full-spectrum ORF.
     ///
-    /// Hand-tuned numbers, so `usesLook` is **false**: no combination of the three
-    /// Look dials produces them — strength 0.5 puts IR gamma at the calibrated 2.15,
-    /// not 1.13, and back-solving strength from that gamma then gives a red
-    /// subtraction of 0.16 against the 0.50 wanted here. With `usesLook` true,
-    /// `resolved` would quietly overwrite IR gamma, both subtractions and output
-    /// gamma with the calibration's values, and the preset would not look like the
-    /// picture it came from. The Look dials still work from here; moving one takes
-    /// those four controls over, which is what the panel already says it does.
+    /// Every other built-in is this one with two or three numbers moved, so the set
+    /// is a family rather than a collection of unrelated starting points — and what
+    /// each sibling changes is written in its notes.
     public static let defaultPreset: AerochromePreset = {
         var params = AerochromeParams()
         params.sourceIR = 2
@@ -326,28 +246,82 @@ public final class AerochromePresetStore {
         params.outputMapR = 2
         params.outputMapG = 0
         params.outputMapB = 1
-        // An S-curve on the master: shadows down a little, highlights up, which is
-        // where the contrast in this look comes from.
-        params.adjustments.curves.master = ToneCurve(points: [
-            CurvePoint(x: 0, y: 0),
-            CurvePoint(x: 0.16947798, y: 0.12618963),
-            CurvePoint(x: 0.7665483, y: 0.92903054),
-            CurvePoint(x: 1, y: 1),
-        ])
-
+        params.adjustments.curves.master = sCurve
         return AerochromePreset(
             name: "Aerochrome Magenta",
             params: params,
-            look: LookSettings(strength: 0.5),
-            usesLook: false,
             // Equal to the defaults, stated anyway so applying the preset puts
             // development back where the look was tuned.
             raw: RawDevelopSettings(),
-            notes: "Leaves lean magenta-pink rather than pure red. Hand-tuned, so "
-                 + "its transform numbers are taken as written — moving a Look dial "
-                 + "takes four of them over."
+            notes: "The default. Foliage leans magenta-pink rather than pure red."
         )
     }()
 
-    private static let builtInPresets: [AerochromePreset] = [defaultPreset]
+    /// The contrast curve the family shares: shadows down a little, highlights up.
+    private static let sCurve = ToneCurve(points: [
+        CurvePoint(x: 0, y: 0),
+        CurvePoint(x: 0.16947798, y: 0.12618963),
+        CurvePoint(x: 0.7665483, y: 0.92903054),
+        CurvePoint(x: 1, y: 1),
+    ])
+
+    /// A denser version of that curve, for the one preset whose point is density.
+    private static let deepCurve = ToneCurve(points: [
+        CurvePoint(x: 0, y: 0),
+        CurvePoint(x: 0.20, y: 0.10),
+        CurvePoint(x: 0.78, y: 0.94),
+        CurvePoint(x: 1, y: 1),
+    ])
+
+    /// Every measurement in the notes below is from the sample frame, comparing the
+    /// sibling against the default: `IRGConverterCheck` asserts the direction of
+    /// each one, so a preset cannot quietly stop doing what it says.
+    private static let builtInPresets: [AerochromePreset] = {
+        let base = defaultPreset.params
+
+        func sibling(_ name: String, notes: String,
+                     _ configure: (inout AerochromeParams) -> Void) -> AerochromePreset {
+            var params = base
+            configure(&params)
+            return AerochromePreset(name: name, params: params,
+                                    raw: RawDevelopSettings(), notes: notes)
+        }
+
+        return [
+            defaultPreset,
+            sibling("Aerochrome Red",
+                    notes: "Purer red foliage. Takes more infrared out of the green "
+                         + "group, which is what was keeping the blue output up and "
+                         + "the leaves pink.") {
+                $0.subtractIRGreen = 0.55
+            },
+            sibling("Aerochrome Bold",
+                    notes: "Brighter, stronger separation. For flat light or weak "
+                         + "vegetation. Raises the infrared curve and re-balances the "
+                         + "red subtraction under it.") {
+                $0.gammaBy = 1.55
+                $0.subtractIRRed = 0.58
+            },
+            sibling("Aerochrome Subtle",
+                    notes: "Restrained. A lower infrared curve and lighter "
+                         + "subtractions keep more of the original tonality.") {
+                $0.gammaBy = 1.02
+                $0.subtractIRRed = 0.38
+                $0.subtractIRGreen = 0.18
+            },
+            sibling("Aerochrome Deep",
+                    notes: "Denser shadows and richer colour, from a lower output "
+                         + "gamma and a steeper curve. Watch the shadows for clipping.") {
+                $0.overallGamma = 2.05
+                $0.adjustments.curves.master = deepCurve
+            },
+            sibling("Pre-swapped IRG",
+                    notes: "For files already ordered infrared / red / green, so the "
+                         + "red channel is read as infrared instead of blue.") {
+                $0.sourceIR = 0
+                $0.sourceVisibleRed = 1
+                $0.sourceVisibleGreen = 2
+            },
+        ]
+    }()
 }
