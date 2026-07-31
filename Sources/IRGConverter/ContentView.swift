@@ -32,6 +32,17 @@ struct ContentView: View {
     @State private var tab: Tab = .aerochrome
     @State private var previewResolution = PreviewResolution.standard
 
+    @State private var zoom: ZoomLevel = .fit
+    /// Pan offset in points, and where it stood when the current drag began.
+    @State private var pan: CGSize = .zero
+    @State private var panAtDragStart: CGSize = .zero
+    @State private var showHistogram = true
+
+    /// Points per image pixel, so 100% can mean one image pixel per *device* pixel
+    /// rather than per point — on a Retina display those differ by 2x, and a "100%"
+    /// that was really 200% would be useless for judging sharpening or noise.
+    @Environment(\.displayScale) private var displayScale
+
     /// Copied settings, and what to call them on the photos they land on.
     @State private var copied: PhotoEdit?
     @State private var copiedFrom: String?
@@ -54,6 +65,35 @@ struct ContentView: View {
         var label: String { self == .full ? "Full" : "\(rawValue) px" }
         /// Nil means no limit.
         var maxDimension: Int? { self == .full ? nil : rawValue }
+    }
+
+    /// How large the preview is drawn. `fit` scales the whole frame into the pane;
+    /// the other two are absolute and pan by dragging.
+    enum ZoomLevel: String, CaseIterable, Identifiable {
+        case fit, oneToOne, twoToOne
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .fit: return "Fit"
+            case .oneToOne: return "100%"
+            case .twoToOne: return "200%"
+            }
+        }
+
+        /// Image pixels per device pixel. Nil for fit, which has no fixed factor.
+        var factor: CGFloat? {
+            switch self {
+            case .fit: return nil
+            case .oneToOne: return 1
+            case .twoToOne: return 2
+            }
+        }
+
+        /// A pixel-for-pixel view of a downsampled proxy would be a lie, so these
+        /// levels render the frame at native size. See `develop()`.
+        var needsFullResolution: Bool { self != .fit }
     }
 
     enum Tab: String, CaseIterable, Identifiable {
@@ -164,6 +204,11 @@ struct ContentView: View {
         .onChange(of: rawSettings) { _, _ in commitEdit(); develop() }
         .onChange(of: aids) { _, _ in reprocess() }
         .onChange(of: previewResolution) { _, _ in develop() }
+        .onChange(of: zoom) { _, _ in
+            pan = .zero
+            panAtDragStart = .zero
+            develop()
+        }
         .sheet(isPresented: $showPresetTiles) {
             PresetTilesView(
                 presets: store.all,
@@ -224,11 +269,44 @@ struct ContentView: View {
                 .fixedSize()
                 .disabled(batchProgress != nil)
                 .help("Write 16-bit TIFFs beside the originals and open them in "
-                      + "Lightroom. Uncompressed — about 120 MB per 20-megapixel photo.")
+                      + "Lightroom. Uncompressed, so the files are large.")
 
-                Toggle("Show Original", isOn: $showOriginal)
+                Divider().frame(height: 16)
+
+                Toggle("Original", isOn: $showOriginal)
                     .toggleStyle(.switch)
                     .controlSize(.small)
+                    .help("Show the untouched source instead of the result")
+
+                Picker("", selection: $zoom) {
+                    ForEach(ZoomLevel.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .help("100% is one image pixel per screen pixel. Drag the photo to "
+                      + "move around when it does not fit.")
+
+                Menu(previewResolution.label) {
+                    ForEach(PreviewResolution.allCases) { level in
+                        Button(level.label) { previewResolution = level }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .controlSize(.small)
+                .fixedSize()
+                .disabled(zoom.needsFullResolution)
+                .help(zoom.needsFullResolution
+                      ? "At 100% and 200% the frame is rendered at full size anyway"
+                      : previewResolutionNote)
+
+                Toggle(isOn: $showHistogram) {
+                    Image(systemName: "chart.bar.xaxis")
+                }
+                .toggleStyle(.button)
+                .controlSize(.small)
+                .help("Show the histogram")
             }
 
             if isExporting {
@@ -365,10 +443,14 @@ struct ContentView: View {
     private var imagePreview: some View {
         Group {
             if let img = displayedImage {
-                Image(img, scale: 1.0, label: Text(showOriginal ? "Original" : "Result"))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .padding()
+                if let factor = zoom.factor {
+                    zoomedImage(img, factor: factor)
+                } else {
+                    Image(img, scale: 1.0, label: Text(showOriginal ? "Original" : "Result"))
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .padding()
+                }
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "photo.badge.plus")
@@ -384,7 +466,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .topTrailing) {
-            HistogramView(histogram: histogram)
+            if showHistogram { HistogramView(histogram: histogram) }
         }
         .overlay(alignment: .topLeading) {
             // A soloed or clipping-marked preview is not the result. Say so, or
@@ -409,6 +491,62 @@ struct ContentView: View {
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             handleDrop(providers: providers)
         }
+    }
+
+    /// The photo at a fixed scale, panned by dragging.
+    ///
+    /// `Image(_:scale:)` divides the pixel size by the scale to get its size in
+    /// points, so `displayScale / factor` puts `factor` image pixels on every device
+    /// pixel: 1 for 100%, 2 for 200%. Drawing it at `scale: 1` instead would give
+    /// twice the intended magnification on a Retina display.
+    private func zoomedImage(_ img: CGImage, factor: CGFloat) -> some View {
+        let size = CGSize(width: CGFloat(img.width) * factor / displayScale,
+                          height: CGFloat(img.height) * factor / displayScale)
+
+        return GeometryReader { geometry in
+            let limit = CGSize(
+                width: max(0, (size.width - geometry.size.width) / 2),
+                height: max(0, (size.height - geometry.size.height) / 2)
+            )
+            let offset = clampPan(pan, to: limit)
+
+            Image(img, scale: displayScale / factor,
+                  label: Text(showOriginal ? "Original" : "Result"))
+                .frame(width: size.width, height: size.height)
+                .offset(x: offset.width, y: offset.height)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .clipped()
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            pan = clampPan(
+                                CGSize(width: panAtDragStart.width + value.translation.width,
+                                       height: panAtDragStart.height + value.translation.height),
+                                to: limit
+                            )
+                        }
+                        .onEnded { _ in panAtDragStart = pan }
+                )
+                .onHover { inside in
+                    // `set()` rather than `push()`/`pop()`: the stack has to be
+                    // balanced, and a view that goes away mid-hover — switching zoom
+                    // does exactly that — would never pop, leaving the grab cursor
+                    // stuck over the whole app.
+                    if inside, limit != .zero {
+                        NSCursor.openHand.set()
+                    } else {
+                        NSCursor.arrow.set()
+                    }
+                }
+        }
+    }
+
+    /// Keep the photo from being dragged off its own pane: at most half its overhang
+    /// in each direction, and pinned to the centre on an axis that already fits.
+    private func clampPan(_ offset: CGSize, to limit: CGSize) -> CGSize {
+        CGSize(width: min(max(offset.width, -limit.width), limit.width),
+               height: min(max(offset.height, -limit.height), limit.height))
     }
 
     // MARK: - Controls
@@ -576,21 +714,6 @@ struct ContentView: View {
     @ViewBuilder
     private var adjustPanel: some View {
         Group {
-            VStack(alignment: .leading, spacing: 8) {
-                sectionHeader("Preview", info: .previewResolution)
-                Picker("", selection: $previewResolution) {
-                    ForEach(PreviewResolution.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                Text(previewResolutionNote)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Divider()
-
             if isRAW {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("RAW Development").font(.subheadline.weight(.semibold))
@@ -737,6 +860,8 @@ struct ContentView: View {
         return params.adjustments.sharpening.radius * previewScale(of: preview)
     }
 
+    /// The toolbar menu's tooltip: what the preview is actually rendering, against
+    /// what the file holds.
     private var previewResolutionNote: String {
         let rendered = previewOutput.map { "\($0.width)×\($0.height)" } ?? "—"
         let source = sourceSize?.label ?? "—"
@@ -1157,6 +1282,8 @@ struct ContentView: View {
         statusMessage = nil
         showOriginal = false
         pendingPreset = nil
+        pan = .zero
+        panAtDragStart = .zero
         develop()
     }
 
@@ -1389,9 +1516,12 @@ struct ContentView: View {
     /// Stale decodes are dropped by generation, so only the newest lands.
     private func develop() {
         guard let item = current else { return }
+        // 100% and 200% mean image pixels, so they need the frame at native size —
+        // magnifying a 1200 px proxy would show proxy pixels, not the photo's.
+        let requestedDimension = zoom.needsFullResolution ? nil : previewResolution.maxDimension
         let key = DevelopKey(url: item.url,
                              raw: item.isRAW ? rawSettings : nil,
-                             maxDimension: previewResolution.maxDimension)
+                             maxDimension: requestedDimension)
         // Switching photos sets three pieces of state at once, each of which
         // triggers this; without the check the same file would be decoded three
         // times over. The in-flight test matters as much as the landed one — the
@@ -1405,7 +1535,7 @@ struct ContentView: View {
         let generation = developGeneration
         let settings = rawSettings
         let url = item.url
-        let maxDimension = previewResolution.maxDimension
+        let maxDimension = requestedDimension
 
         DispatchQueue.global(qos: .userInitiated).async {
             let result: Result<CGImage, Error>

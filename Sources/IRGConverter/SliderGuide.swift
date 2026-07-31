@@ -66,16 +66,6 @@ struct SliderGuide {
         ]
     )
 
-    static let previewResolution = SliderGuide(
-        title: "Preview Resolution",
-        layer: "How large an image the live preview is computed from.",
-        points: [
-            "Lower is faster to drag. Higher shows real detail and noise, which matters when judging the subtraction on fine foliage.",
-            "Export is always full resolution regardless of this — it re-develops from the file.",
-            "It has no effect on the settings — nothing is measured from the image, so the numbers are the same at every resolution. Sharpening is the one exception: its radius is in pixels, so a downsampled preview cannot show it.",
-        ]
-    )
-
     static let sharpening = SliderGuide(
         title: "Sharpening",
         layer: "An unsharp mask over the finished image: blur the luminance, and add back what the blur removed.",

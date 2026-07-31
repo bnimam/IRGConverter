@@ -72,9 +72,12 @@ false-colour look, one at a time or a shoot at a time.
   opens them in Lightroom. Uncompressed is measured, not lazy: on the sample frame
   LZW *expands* the data to 128% of raw, and deflate saves 4% for twenty times the
   write cost.
-- **Adjustable preview resolution**, 600 px to full, so dragging stays responsive on
-  big files. Renders and decodes are coalesced — a slider drag never computes work
-  that is already stale.
+- **View controls in the top bar** — compare against the original, zoom to **Fit**,
+  **100%** or **200%**, choose the resolution the live preview is computed from, and
+  hide the histogram. 100% is one image pixel per *device* pixel, so the zoomed levels
+  render the frame at native size rather than magnifying a proxy; drag the photo to
+  move around it. Renders and decodes are coalesced — a slider drag never computes
+  work that is already stale.
 
 ### Around the app
 
