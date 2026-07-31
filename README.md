@@ -1,6 +1,6 @@
 # IRGConverter
 
-**Version 1.0.0** · macOS 14+ · [Changelog](CHANGELOG.md)
+**Version 1.1.0** · macOS 14+ · [Changelog](CHANGELOG.md)
 
 Native macOS app that converts (I)nfrared - (R)ed - (G)reen photographs to the
 false-colour look of **Kodak Aerochrome**. SwiftUI and Accelerate, entirely
@@ -60,7 +60,6 @@ Other filters work too — the app just assumes yellow by default.
 
 ## Features
 
-- **One transform**, transcribed from a Photoshop layer workflow. See [Algorithm](#algorithm).
 - **Batch editing** — filmstrip, per-photo settings, copy/paste between photos, folder export.
 - **Six presets** plus your own, and a **Preview Presets** sheet that renders them all as tiles of your photo.
 - **Adjust tab** — exposure, contrast, tonal lifts, colour, curves, sharpening.
@@ -82,17 +81,14 @@ looks first, and where Finder's *Open With* can find it.
 
 ### Option 1: Download
 
-1. Download `IRGConverter-1.0.0.zip` from the [releases page](https://github.com/bnimam/IRGConverter/releases).
-2. Unzip it. Inside are the app, the Lightroom plugin, this README, the changelog and the licence.
-
-   ```bash
-   cd ~/Downloads && unzip IRGConverter-1.0.0.zip
-   ```
+1. Download `IRGConverter.zip` from the [releases page](https://github.com/bnimam/IRGConverter/releases).
+2. Unzip it. Inside are the app, the [Lightroom plugin](#lightroom-plugin) with its
+   installer, this README, the changelog and the licence.
 3. Move it in, clear the quarantine flag (the app is ad-hoc signed, not notarized, so
    Gatekeeper will otherwise refuse it), and open it:
 
    ```bash
-   mv ~/Downloads/IRGConverter-1.0.0/IRGConverter.app /Applications/
+   mv ~/Downloads/IRGConverter/IRGConverter.app /Applications/
    xattr -dr com.apple.quarantine /Applications/IRGConverter.app
    open /Applications/IRGConverter.app
    ```
@@ -246,15 +242,33 @@ deflate saves a few percent for twenty times the write time.
 ## Lightroom plugin
 
 A Lightroom **Classic** plugin in [`LightroomPlugin/`](LightroomPlugin/) does one
-thing: sends the photos selected in Lightroom to IRGConverter.app.
+thing: sends the photos selected in Lightroom to IRGConverter.app. It passes the
+**original file paths**, so the conversion starts from sensor data; the catalogue is
+not written to and no rendition is exported. Coming back is the app's own *Send to
+Lightroom*.
 
-```bash
-./LightroomPlugin/install.sh    # copies it into Lightroom's Modules folder
-```
+### Installing it
 
-Then **Library > Plug-in Extras > Open in IRGConverter**. It passes the **original
-file paths**, so the conversion starts from sensor data; the catalogue is not written
-to and no rendition is exported. Coming back is the app's own *Send to Lightroom*.
+The plugin is in the release archive under `LightroomPlugin/`, and in the repository at
+the same path. Nothing is compiled — it is Lua, so either copy is ready to install.
+
+1. Put `IRGConverter.app` in `/Applications` if it is not there already (see
+   [Installation](#installation)). That is the first place the plugin looks; anywhere
+   else and you will have to set the path by hand in Lightroom's Plug-in Manager.
+2. From the unzipped download (or a clone of the repository), run the installer. It
+   copies the plugin into `~/Library/Application Support/Adobe/Lightroom/Modules` — no
+   admin rights needed, and it survives Lightroom updates:
+
+   ```bash
+   ./LightroomPlugin/install.sh
+   ```
+3. Restart Lightroom Classic if it was open. **File > Plug-in Manager** should now
+   list *IRGConverter*; if it does not, click **Add** and choose the folder the
+   installer printed.
+
+Then select photos and choose **Library > Plug-in Extras > Open in IRGConverter** (it
+also appears under File > Plug-in Extras). Lightroom **Classic** only — the cloud
+Lightroom has no plugin SDK of this kind.
 
 Deeper integration is not possible: this transform subtracts one channel from another,
 which nothing in Lightroom's Develop module can express, and there is no API for

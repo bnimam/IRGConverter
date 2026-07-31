@@ -134,11 +134,13 @@ echo "Done: $APP_BUNDLE"
 echo "     CLI at $APP_BUNDLE/Contents/MacOS/irgconvert"
 
 if [ "$MAKE_ZIP" = "1" ]; then
-    # A download that needs no further assembly: the app, the Lightroom plugin with
-    # its installer, and the documents that say what the licence is and how to use
-    # it. Built in a staging folder so the archive has one tidy top-level directory.
-    STAGE="$PROJECT_DIR/dist/$APP_NAME-$VERSION"
-    ARCHIVE="$PROJECT_DIR/dist/$APP_NAME-$VERSION.zip"
+    # A download that needs no further assembly: the app, the Lightroom plugin with its
+    # installer, and the documents that say what the licence is and how to use it. The
+    # plugin's test harness comes along with the folder, which is harmless and saves
+    # picking the directory apart. Built in a staging folder so the archive has one
+    # tidy top-level directory.
+    STAGE="$PROJECT_DIR/dist/$APP_NAME"
+    ARCHIVE="$PROJECT_DIR/dist/$APP_NAME.zip"
     echo "Packaging $ARCHIVE..."
     rm -rf "$STAGE" "$ARCHIVE"
     mkdir -p "$STAGE"
@@ -146,6 +148,8 @@ if [ "$MAKE_ZIP" = "1" ]; then
     ditto "$APP_BUNDLE" "$STAGE/$APP_NAME.app"
     ditto "$PROJECT_DIR/LightroomPlugin" "$STAGE/LightroomPlugin"
     cp "$PROJECT_DIR/README.md" "$PROJECT_DIR/LICENSE" "$PROJECT_DIR/CHANGELOG.md" "$STAGE/"
+    # Finder litters these through any folder it has looked at, and ditto copies them.
+    find "$STAGE" -name .DS_Store -delete
     # --norsrc --noextattr is not tidiness, it is required. Without them ditto stores
     # each file's metadata as an AppleDouble member, and plain `unzip` — which is what
     # someone at a terminal will reach for — writes those out as real `._*` files
@@ -155,7 +159,7 @@ if [ "$MAKE_ZIP" = "1" ]; then
     # without them, only `ditto` does. `zip -r` would also be clean but does not
     # preserve bundle symlinks in general.
     (cd "$PROJECT_DIR/dist" && ditto -c -k --norsrc --noextattr --keepParent \
-        "$APP_NAME-$VERSION" "$APP_NAME-$VERSION.zip")
+        "$APP_NAME" "$APP_NAME.zip")
     rm -rf "$STAGE"
     echo "Done: $ARCHIVE"
 fi

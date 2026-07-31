@@ -2,6 +2,63 @@
 
 All notable changes to IRGConverter. Versions follow [semantic versioning](https://semver.org).
 
+## 1.1.0 — 2026-07-30
+
+The transform is now set directly instead of through dials, and there is a family of
+presets over it.
+
+### Added
+
+- **A family of presets.** *Aerochrome Magenta* is still the default every photo
+  starts on; *Red*, *Bold*, *Subtle*, *Deep* and *Pre-swapped IRG* are each that one
+  with two or three numbers moved. Each says what it changes, and a check renders all
+  six on a foliage-and-sky fixture to assert the direction of every claim.
+- **Preview Presets…** — every preset as a tile of the photo you are working on,
+  rendered from the preview already in memory: one downsample, then one transform per
+  preset over the same prepared buffers. Click a tile to apply it. What a preset does
+  depends on the frame, so seeing them beats reading their names.
+- **Zoom and pan.** **Fit**, **100%** and **200%** in the top bar. 100% is one image
+  pixel per *device* pixel, so the zoomed levels render the frame at native size
+  rather than magnifying a downsampled proxy; drag the photo to move around it.
+- **A histogram toggle**, and the preview-resolution menu, both moved to the top bar.
+- Six transform flags on `irgconvert` — `--ir-gamma`, `--red-gamma`,
+  `--red-subtract`, `--green-gamma`, `--green-subtract`, `--output-gamma` — replacing
+  the dial flags.
+
+### Changed
+
+- **The six transform controls are set directly.** The Look dials (Strength, Magenta,
+  Density) are gone. They owned four of the controls, so a hand-tuned value silently
+  detached from its dial and any later dial move took it back, leaving the panel
+  unable to say which numbers were yours. Presets had the same split personality, some
+  storing dials and some storing values.
+- **The preset menu keeps naming the preset a photo was started from**, even after a
+  slider moves. It is a record of where the settings came from, not a claim that the
+  numbers are untouched.
+- Copy/paste scope groups: four → **three** (the Aerochrome transform, the Adjust tab,
+  RAW development). They still partition the settings exactly.
+- The release archive is `IRGConverter.zip` — unversioned, so the download link in the
+  README does not go stale — and carries the app, the Lightroom plugin with its
+  installer, the README, the changelog and the licence. It is built so that both
+  `unzip` and Finder produce a bundle whose signature still validates.
+- The README is about a third of its former length, with screenshots and a
+  step-by-step install for both the app and the Lightroom plugin.
+- `swift run IRGConverterCheck` now runs 231 checks.
+
+### Removed
+
+- **Black and white.** The monochrome modes and their two presets are gone; *Solo*
+  still renders one signal as grey, since that is a diagnostic rather than part of the
+  image.
+- `--strength` / `--magenta` / `--density` and `--mono` from `irgconvert`.
+
+### Compatibility
+
+Presets and edits written by 1.0.0 still load. Those files carry `look` and
+`usesLook`, which are now ignored — 1.0.0 stored `params` as the values actually on
+its sliders, so the numbers come back as they were and nothing is re-derived. A check
+covers a preset from each era.
+
 ## 1.0.0 — 2026-07-30
 
 First release. Converts infrared/red/green photographs to the Kodak Aerochrome
@@ -16,45 +73,36 @@ false-colour look, one at a time or a shoot at a time.
   get wrong.
 - Runs on normalized float planes through Accelerate (vDSP), and is checked against
   a scalar transcription of the equations.
-- **Six transform controls, set directly** — the infrared curve, both group curves,
-  both subtractions and the output gamma. No abstraction over them: what the panel
-  shows is what the transform uses, and a preset is a set of exactly these numbers.
-  Each group has an ⓘ button giving the order to set them in and the symptom of each
-  being wrong.
+- **Look dials** — Strength, Magenta and Density drive the six group controls as a
+  pure function of the calibration, so the same settings give the same numbers on
+  every frame. Move a group control by hand and it detaches until a dial or a preset
+  sets it again.
 - **Source channel roles** — which file channel carries infrared, visible red and
   visible green. Defaults to infrared in **blue**, where a yellow-filtered
   full-spectrum camera puts it.
+- **Black and white** from the infrared signal alone, either visible band, or the
+  composite's luminance.
 
 ### Editing
 
 - **Batch editing** — a filmstrip along the bottom, each photo owning its own edit.
-  Finder-style selection (plain click, ⌘-click, ⇧-click), copy/paste of settings with
-  three independent scope groups (the Aerochrome transform, the Adjust tab, RAW
-  development), and *Apply to Selected* for the common case.
+  Finder-style selection (plain click, ⌘-click, ⇧-click), copy/paste of settings
+  with four independent scope groups (Look, channels, tone, RAW development), and
+  *Apply to Selected* for the common case.
 - **Adjust tab** — exposure, contrast, highlights, shadows, whites, blacks,
   saturation, vibrance, warmth, tint; master and per-channel tone curves with
   monotone cubic interpolation; and **sharpening** (a luminance unsharp mask with
   amount, radius and threshold).
-- **Presets** — six built-in looks plus your own, saved as readable JSON in
-  `~/Library/Application Support/IRGConverter/Presets`. *Aerochrome Magenta* is the
-  default every photo starts on; the other five are that one with two or three numbers
-  moved (Red, Bold, Subtle, Deep, and one for files already in IRG order). Each says
-  what it changes, and a check renders all of them on a foliage-and-sky fixture to
-  assert the direction of every claim. Export and import to share.
-- **Preview Presets** — a sheet showing every preset as a tile of the photo you are
-  working on, rendered from the preview already in memory: one downsample, then one
-  transform per preset over the same prepared buffers. Click a tile to apply it. What
-  a preset does depends on the frame, so seeing them beats reading their names.
-- The preset menu keeps naming the preset a photo was started from even after a
-  slider moves — a record of where the settings came from, not a claim that they are
-  untouched.
+- **Presets** — one shipped default look, *Aerochrome Magenta*, plus your own saved
+  as readable JSON in `~/Library/Application Support/IRGConverter/Presets`. Export
+  and import to share.
 - **Viewing aids** — Solo any one signal as grey, and a clipping overlay. Both are
   diagnostic: never saved into a preset, never applied on export, and the preview
   says so while either is on.
 - **Histogram** with clipping readouts, plotted on a mild power curve because a
   false-colour render piles most of its pixels into a few narrow peaks.
-- Double-click any control to reset just that control to the active preset, a paste,
-  or the default. Every group has an ⓘ button explaining which way to
+- Double-click any control to reset just that control to the active preset, the last
+  Look change, or the default. Every group has an ⓘ button explaining which way to
   move its controls and how to tell they are wrong.
 
 ### RAW and output
@@ -72,12 +120,9 @@ false-colour look, one at a time or a shoot at a time.
   opens them in Lightroom. Uncompressed is measured, not lazy: on the sample frame
   LZW *expands* the data to 128% of raw, and deflate saves 4% for twenty times the
   write cost.
-- **View controls in the top bar** — compare against the original, zoom to **Fit**,
-  **100%** or **200%**, choose the resolution the live preview is computed from, and
-  hide the histogram. 100% is one image pixel per *device* pixel, so the zoomed levels
-  render the frame at native size rather than magnifying a proxy; drag the photo to
-  move around it. Renders and decodes are coalesced — a slider drag never computes
-  work that is already stale.
+- **Adjustable preview resolution**, 600 px to full, so dragging stays responsive on
+  big files. Renders and decodes are coalesced — a slider drag never computes work
+  that is already stale.
 
 ### Around the app
 
@@ -88,7 +133,7 @@ false-colour look, one at a time or a shoot at a time.
   conversions.
 - Files can arrive by drag and drop, an open panel, Finder's *Open With*, a drop on
   the Dock icon, or as command-line paths.
-- `swift run IRGConverterCheck` runs 231 checks with no Xcode required — an
+- `swift run IRGConverterCheck` runs 206 checks with no Xcode required — an
   executable target rather than an XCTest one, so it works on a bare Command Line
   Tools install.
 
