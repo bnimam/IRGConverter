@@ -3,7 +3,7 @@
 **Version 1.1.0** · macOS 14+ · [Changelog](CHANGELOG.md)
 
 Native macOS app that converts (I)nfrared - (R)ed - (G)reen photographs to the
-false-colour look of **Kodak Aerochrome**. SwiftUI and Accelerate, entirely
+false-color look of **Kodak Aerochrome**. SwiftUI and Accelerate, entirely
 on-device, no dependencies.
 
 - [Overview](#overview)
@@ -62,7 +62,7 @@ Other filters work too — the app just assumes yellow by default.
 
 - **Batch editing** — filmstrip, per-photo settings, copy/paste between photos, folder export.
 - **Six presets** plus your own, and a **Preview Presets** sheet that renders them all as tiles of your photo.
-- **Adjust tab** — exposure, contrast, tonal lifts, colour, curves, sharpening.
+- **Adjust tab** — exposure, contrast, tonal lifts, color, curves, sharpening.
 - **Viewing aids** — solo one signal as grey, or mark clipped pixels.
 - **RAW development** with measured defaults, re-done at full resolution on export.
 - **16-bit pipeline** — decode, orientation, downscale and transform all keep the depth.
@@ -203,7 +203,7 @@ whites, blacks, saturation, vibrance, warmth, tint; master and per-channel curve
 **RAW Development** — neutral balance and −1 EV headroom by default. Both are
 measured, not taste: on the sample frame they cut clipped red pixels from 9.6% to 0.8%
 and raise agreement between the two recovered visible channels from 0.880 to 0.944. A
-colour temperature cannot substitute — cooling far enough to stop the clipping
+color temperature cannot substitute — cooling far enough to stop the clipping
 squashes the channels together and loses the infrared channel entirely.
 
 **Sharpening** is a luminance unsharp mask (amount, radius, threshold), applied last
@@ -337,7 +337,7 @@ would put banding exactly where the look lives. Measured, the infrared output ca
 19,361 distinct levels; before the load path was fixed to stay at 16 bits it carried
 101.
 
-Then the Adjust tab: tone and colour in one fused pass, curves as one composed
+Then the Adjust tab: tone and color in one fused pass, curves as one composed
 256-entry table per channel, and the unsharp mask as two separable vImage convolutions
 over a single luminance plane.
 
